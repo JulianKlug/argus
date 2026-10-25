@@ -1,0 +1,91 @@
+itemid,category,concept
+220045,NOT_DECISION,measurement/vitalsign: vital sign
+220048,NOT_DECISION,measurement/rhythm: rhythm
+220050,NOT_DECISION,measurement/vitalsign: vital sign
+220051,NOT_DECISION,measurement/vitalsign: vital sign
+220052,NOT_DECISION,measurement/vitalsign: vital sign
+220179,NOT_DECISION,measurement/vitalsign: vital sign
+220180,NOT_DECISION,measurement/vitalsign: vital sign
+220181,NOT_DECISION,measurement/vitalsign: vital sign
+220210,NOT_DECISION,measurement/vitalsign: vital sign
+220277,NOT_DECISION,measurement/vitalsign: vital sign
+220339,DEVICE_SETTING,measurement/ventilator_setting: peep
+220621,NOT_DECISION,measurement/vitalsign: vital sign
+220739,NOT_DECISION,measurement/gcs: gcs
+220765,NOT_DECISION,measurement/icp: icp
+221289,MEDICATION,medication/epinephrine: vasoactive/neuroblock infusion
+221555,MEDICATION,medication/neuroblock: vasoactive/neuroblock infusion
+221653,MEDICATION,medication/dobutamine: vasoactive/neuroblock infusion
+221662,MEDICATION,medication/dopamine: vasoactive/neuroblock infusion
+221749,MEDICATION,medication/phenylephrine: vasoactive/neuroblock infusion
+221906,MEDICATION,medication/norepinephrine: vasoactive/neuroblock infusion
+221986,MEDICATION,medication/milrinone: vasoactive/neuroblock infusion
+222062,MEDICATION,medication/neuroblock: vasoactive/neuroblock infusion
+222315,MEDICATION,medication/vasopressin: vasoactive/neuroblock infusion
+223761,NOT_DECISION,measurement/vitalsign: vital sign
+223762,NOT_DECISION,measurement/vitalsign: vital sign
+223834,DEVICE_SETTING,measurement/oxygen_delivery: o2_flow
+223835,DEVICE_SETTING,measurement/ventilator_setting: fio2
+223848,DEVICE_SETTING,measurement/ventilator_setting: ventilator_type
+223849,DEVICE_SETTING,measurement/ventilator_setting: ventilator_mode
+223900,NOT_DECISION,measurement/gcs: gcs
+223901,NOT_DECISION,measurement/gcs: gcs
+224144,DEVICE_SETTING,treatment/crrt: blood_flow
+224145,DEVICE_SETTING,treatment/crrt: heparin_dose
+224146,NOT_DECISION,treatment/crrt: system_integrity
+224149,NOT_DECISION,treatment/crrt: access_pressure
+224150,NOT_DECISION,treatment/crrt: filter_pressure
+224151,NOT_DECISION,treatment/crrt: effluent_pressure
+224152,NOT_DECISION,treatment/crrt: return_pressure
+224153,DEVICE_SETTING,treatment/crrt: replacement_rate
+224154,DEVICE_SETTING,treatment/crrt: dialysate_rate
+224639,NOT_DECISION,demographics/weight_durations: weight
+224642,NOT_DECISION,measurement/vitalsign: vital sign
+224650,NOT_DECISION,measurement/rhythm: rhythm
+224651,NOT_DECISION,measurement/rhythm: rhythm
+224684,DEVICE_SETTING,measurement/ventilator_setting: tidal_volume_set
+224685,NOT_DECISION,measurement/ventilator_setting: tidal_volume_observed
+224686,NOT_DECISION,measurement/ventilator_setting: tidal_volume_spontaneous
+224687,NOT_DECISION,measurement/ventilator_setting: minute_volume
+224688,DEVICE_SETTING,measurement/ventilator_setting: respiratory_rate_set
+224689,NOT_DECISION,measurement/ventilator_setting: respiratory_rate_spontaneous
+224690,NOT_DECISION,measurement/ventilator_setting: respiratory_rate_total
+224696,NOT_DECISION,measurement/ventilator_setting: plateau_pressure
+224700,NOT_DECISION,measurement/ventilator_setting: peep (Total PEEP Level)
+225183,DEVICE_SETTING,treatment/crrt: current_goal
+225309,NOT_DECISION,measurement/vitalsign: vital sign
+225310,NOT_DECISION,measurement/vitalsign: vital sign
+225312,NOT_DECISION,measurement/vitalsign: vital sign
+225664,NOT_DECISION,measurement/vitalsign: vital sign
+225958,DEVICE_SETTING,treatment/crrt: heparin_concentration
+225976,DEVICE_SETTING,treatment/crrt: replacement_fluid
+225977,DEVICE_SETTING,treatment/crrt: dialysate_fluid
+226329,NOT_DECISION,measurement/vitalsign: vital sign
+226457,NOT_DECISION,treatment/crrt: ultrafiltrate_output
+226479,NOT_DECISION,measurement/rhythm: rhythm
+226480,NOT_DECISION,measurement/rhythm: rhythm
+226512,NOT_DECISION,demographics/weight_durations: weight
+226537,NOT_DECISION,measurement/vitalsign: vital sign
+226557,NOT_DECISION,measurement/urine_output: urine output
+226558,NOT_DECISION,measurement/urine_output: urine output
+226559,NOT_DECISION,measurement/urine_output: urine output
+226560,NOT_DECISION,measurement/urine_output: urine output
+226561,NOT_DECISION,measurement/urine_output: urine output
+226563,NOT_DECISION,measurement/urine_output: urine output
+226564,NOT_DECISION,measurement/urine_output: urine output
+226565,NOT_DECISION,measurement/urine_output: urine output
+226567,NOT_DECISION,measurement/urine_output: urine output
+226584,NOT_DECISION,measurement/urine_output: urine output
+226707,NOT_DECISION,measurement/height: height
+226730,NOT_DECISION,measurement/height: height
+226732,DEVICE_SETTING,measurement/oxygen_delivery: o2_delivery_device
+227287,DEVICE_SETTING,measurement/oxygen_delivery: o2_flow_additional
+227290,DEVICE_SETTING,treatment/crrt: crrt_mode
+227488,NOT_DECISION,measurement/urine_output: urine output
+227489,NOT_DECISION,measurement/urine_output: urine output
+227582,DEVICE_SETTING,measurement/oxygen_delivery: o2_flow (bipap)
+227989,NOT_DECISION,measurement/icp: icp
+228004,DEVICE_SETTING,treatment/crrt: citrate
+228005,DEVICE_SETTING,treatment/crrt: prefilter_replacement_rate
+228006,DEVICE_SETTING,treatment/crrt: postfilter_replacement_rate
+229314,DEVICE_SETTING,measurement/ventilator_setting: ventilator_mode_hamilton
