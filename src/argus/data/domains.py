@@ -123,6 +123,7 @@ class DecisionCategory(Enum):
     PROCEDURE = "procedure"  # lines, intubation, restraints, ...
     CONSULT = "consult"
     PATIENT_MOVEMENT = "patient_movement"  # admission, transfer, discharge orders
+    EQUIPMENT_REMOVAL = "equipment_removal"  # lines, catheters, drains, pacer wires removed
 
 
 class DecisionAction(Enum):

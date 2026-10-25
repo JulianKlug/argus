@@ -19,6 +19,7 @@ PEEP, FIO2, TIDAL_SET, HEART_RATE = 220339, 223835, 224684, 220045
 NOREPI, ORAL_WATER, INSULIN, DEXTROSE_5 = 221906, 220454, 223258, 220950
 INVASIVE_VENT, INTUBATION, XRAY, ARTERIAL_LINE = 225792, 224385, 221216, 225752
 PCA_RATE, RESTRAINTS = 224331, 224856
+ARTERIAL_LINE_REMOVED, FOLEY, CHEST_TUBE_REMOVED = 225737, 229351, 227712
 MAIN = "Main order parameter"
 DRIP, BOLUS, ORAL = "01-Drips", "05-Med Bolus", "14-Oral/Gastric Intake"
 FLUID, SC_INSULIN = "02-Fluids (Crystalloids)", "06-Insulin (Non IV)"
@@ -38,6 +39,9 @@ CATALOG_ROWS = [
     (Source.D_ITEMS, ARTERIAL_LINE, "PROCEDURE", "LINE", None),
     (Source.D_ITEMS, PCA_RATE, "MEDICATION", "PCA", None),
     (Source.D_ITEMS, RESTRAINTS, "PROCEDURE", "RESTRAINT", None),
+    (Source.D_ITEMS, ARTERIAL_LINE_REMOVED, "EQUIPMENT_REMOVAL", "LINE", None),
+    (Source.D_ITEMS, FOLEY, "PROCEDURE", "CATHETER", None),
+    (Source.D_ITEMS, CHEST_TUBE_REMOVED, "EQUIPMENT_REMOVAL", None, None),
     (Source.D_ITEMS, XRAY, NOT_DECISION, None, None),
     (Source.INPUT_ORDER_CATEGORY, DRIP, "MEDICATION", "DRIP", None),
     (Source.INPUT_ORDER_CATEGORY, BOLUS, "MEDICATION", "BOLUS", None),
@@ -321,6 +325,27 @@ def test_charted_medications_and_procedures_follow_catalog(catalog):
     assert result[DecisionCategory.DEVICE_SETTING].empty
 
 
+def test_charted_removals_stop_unless_unplanned(catalog):
+    """protects=charted line discontinuation is an EQUIPMENT_REMOVAL STOP each time it is charted;
+    accidental (unplanned) removals are not decisions;
+    fails_when=removal filed as START/CONTINUE, a second removal of the same item type silenced
+    by the first-value rule, or a patient-pulled line counted;
+    no_claim=which line was removed when several of a type are in place."""
+    chart = [
+        _chart(ARTERIAL_LINE_REMOVED, "Planned", START - HOUR),  # 0 before window
+        _chart(ARTERIAL_LINE_REMOVED, "Planned", START + HOUR),  # 1 STOP (same value as before)
+        _chart(ARTERIAL_LINE_REMOVED, "Unplanned - Patient-initiated", START + 2 * HOUR),  # 2 accident
+        _chart(ARTERIAL_LINE_REMOVED, "Infiltrated", START + 3 * HOUR),  # 3 STOP: removed for a complication
+    ]
+
+    result = _decisions(catalog, CHARTEVENTS=chart)[DecisionCategory.EQUIPMENT_REMOVAL]
+
+    assert _actions(result, Table.CHARTEVENTS) == [
+        (1, DecisionAction.STOP, START + HOUR),
+        (3, DecisionAction.STOP, START + 3 * HOUR),
+    ]
+
+
 def test_poe_orders_follow_catalog_and_transaction(catalog):
     """protects=poe orders: catalog category, New/Change/D-C actions, medication orders stop-only;
     fails_when=medication New duplicated from poe, non-decision types emitted, D/C label not the drug;
@@ -358,8 +383,8 @@ def test_poe_orders_follow_catalog_and_transaction(catalog):
 
 
 def test_procedure_intervals_start_and_stop(catalog):
-    """protects=device and procedure intervals: START at starttime, STOP at visible endtime (line removed);
-    point events START only; each under its catalog category;
+    """protects=device intervals: START at starttime, STOP at visible endtime; procedures START only;
+    catheter interval end and removal point events are EQUIPMENT_REMOVAL STOP;
     fails_when=running interval gets a STOP (endtime is unknown at `at`), imaging emitted, or intubation STOP;
     no_claim=clinical meaning of each procedure item (catalog review)."""
     procedures = [
@@ -368,6 +393,9 @@ def test_procedure_intervals_start_and_stop(catalog):
         dict(STAY_IDS, itemid=INVASIVE_VENT, starttime=START + 4 * HOUR, endtime=AT + 24 * HOUR, value=1.0),  # 2
         dict(STAY_IDS, itemid=XRAY, starttime=START + HOUR, endtime=START + HOUR + MINUTE, value=1.0),  # 3
         dict(STAY_IDS, itemid=ARTERIAL_LINE, starttime=START - HOUR, endtime=START + 2 * HOUR, value=1.0),  # 4
+        dict(STAY_IDS, itemid=FOLEY, starttime=START - HOUR, endtime=START + 3 * HOUR, value=1.0),  # 5
+        dict(STAY_IDS, itemid=CHEST_TUBE_REMOVED, starttime=START + 2 * HOUR, endtime=START + 2 * HOUR + MINUTE,
+             value=1.0),  # 6
     ]
 
     result = _decisions(catalog, PROCEDUREEVENTS=procedures)
@@ -378,8 +406,11 @@ def test_procedure_intervals_start_and_stop(catalog):
         (2, DecisionAction.START, START + 4 * HOUR),
     ]
     assert _actions(result[DecisionCategory.PROCEDURE], Table.PROCEDUREEVENTS) == [
-        (1, DecisionAction.START, START + HOUR),
-        (4, DecisionAction.STOP, START + 2 * HOUR),  # line inserted before the window, removed in it
+        (1, DecisionAction.START, START + HOUR),  # line 4: inserted before the window; its removal is charted
+    ]
+    assert _actions(result[DecisionCategory.EQUIPMENT_REMOVAL], Table.PROCEDUREEVENTS) == [
+        (5, DecisionAction.STOP, START + 3 * HOUR),  # Foley removed: no charted removal item exists
+        (6, DecisionAction.STOP, START + 2 * HOUR),
     ]
 
 

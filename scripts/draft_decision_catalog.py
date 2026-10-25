@@ -35,6 +35,7 @@ TEST_ORDER = DecisionCategory.TEST_ORDER.name
 PROCEDURE = DecisionCategory.PROCEDURE.name
 CONSULT = DecisionCategory.CONSULT.name
 PATIENT_MOVEMENT = DecisionCategory.PATIENT_MOVEMENT.name
+EQUIPMENT_REMOVAL = DecisionCategory.EQUIPMENT_REMOVAL.name
 
 EVIDENCE_DIR = Path(__file__).parent / "catalog_evidence"
 MIMIC_CODE_FILE = "mimic_code.csv"
@@ -53,16 +54,35 @@ SETTING_ITEMS: dict[str, tuple[int, ...]] = {
         224705, 224706, 224707, 224709, 224715, 224738, 224865, 226732, 226871, 226873,
         227187, 227287, 227577, 227579, 227580, 227581, 227582, 227583, 227808, 229314, 229659,
         229663, 230045,
+        224710, 224711, 224712,  # recruitment maneuver pressure / duration / mode
+        224716, 224692, 225978, 224735,  # SBT stopped, flow pattern, slope, flow rate (variable/fixed)
     ),
     "DIALYSIS": (
         224144, 224145, 224153, 224154, 224191, 225183, 225806, 225810, 225953, 225958, 225976,
         225977, 227290, 228004, 228005, 228006, 230083, 230084, 230085,
+        227527,  # ACD-A citrate: CRRT anticoagulation counts as a CRRT setting (clinician, 2026-10-25)
     ),
     "ECMO": (229268, 229277, 229278, 229280, 229840, 229841, 229845, 229846),
-    "VAD": (229262, 229263, 229303, 229829, 229836, 229895, 228192, 228195, 230086),
-    "IABP": (220120, 227980),
+    "VAD": (229262, 229263, 229303, 229829, 229836, 229895, 228192, 228195, 230086,
+            228874, 223775, 224363, 224659),  # HM II speed, VAD beat rate R/L, vacuum assist
+    "IABP": (220120, 227980, 225980, 225984),  # + IABP volume, trigger
     "IMPELLA": (228156, 229675),
-    "PACEMAKER": (220194, 223956, 223964, 223969, 224751, 224753, 224755, 224837, 224838),
+    "PACEMAKER": (220194, 223956, 223964, 223969, 224751, 224753, 224755, 224837, 224838,
+                  223957, 223966),  # pacer rate, transcutaneous pacer placement
+    "NEURO_DRAIN": (223930, 227984),  # drain level (height)
+    "CHEST_TUBE": (223994, 224427, 224436, 224437, 224806, 224808, 224810, 224812),  # suction amount / type
+    "COMPRESSION": (228419, 228420, 228451, 228452),  # sequential compression devices
+    "TEMPERATURE": (224105, 224106, 225050, 225052, 229686, 227627),  # warming / cooling device, set temp
+}
+
+# chartevents removal items: every planned charting is an EQUIPMENT_REMOVAL STOP.
+REMOVAL_ITEMS: dict[str, tuple[int, ...]] = {
+    "LINE": (
+        225737, 225738, 225739, 225740, 225741, 225742, 225743, 225744, 225745, 225746, 225747, 225748,
+        225749, 225750, 225751, 225764, 226125, 227725, 228170, 229544, 229552,  # "<line> Discontinued"
+        224121, 225230, 225233, 225236, 225239, 225759, 229474,  # peripheral "Reason Discontinued"
+    ),
+    "CANNULA": (228206, 228217, 229558),  # Tandem Heart / cardiac assist cannula discontinued
 }
 
 # Other charted decisions (not device settings): itemid -> (category, subcategory).
@@ -74,11 +94,15 @@ CHARTED_ITEMS: dict[int, tuple[str, str]] = {
                      224178, 224181, 227133, 227570, 224375, 224748, 227131,  # nebulizers
                      224749), (MEDICATION, "INHALED")),  # nitric oxide
     **dict.fromkeys((227210, 227211, 227212, 227213, 227214, 227215, 229788, 229789), (MEDICATION, "INTUBATION")),
-    **dict.fromkeys((225952, 225959, 227638, 227639), (MEDICATION, "DIALYSATE_ADDITIVE")),
+    **dict.fromkeys((225952, 225959, 227638, 227639, 225961, 227640), (MEDICATION, "DIALYSATE_ADDITIVE")),
+    **dict.fromkeys((226432, 225271), (MEDICATION, "INTUBATION")),  # intubation drugs / induction doses
+    **dict.fromkeys((224491, 225257, 224505), (MEDICATION, "LOCAL_ANESTHETIC")),  # lidocaine for LP / taps
+    223801: (MEDICATION, "NMB"),  # NMB Medication
     227521: (MEDICATION, "BOLUS"),  # KCL Bolus
-    **dict.fromkeys((224856, 227672, 227673, 227946, 227963), (PROCEDURE, "RESTRAINT")),
-    **dict.fromkeys((225575, 228026, 225707, 228036, 225647, 225284, 228046), (PROCEDURE, "LINE")),  # "ordered on POE"
-    228163: (PROCEDURE, "DEVICE"),  # Impella Catheter Repositioned
+    **dict.fromkeys((228163, 228213, 228224), (PROCEDURE, "DEVICE")),  # Impella / Tandem Heart repositioned
+    224019: (PROCEDURE, "CATHETER"),  # Bladder Irrigation
+    # Charted copies of POE orders (lines / restraints ordered, consults, called out) stay NOT_DECISION:
+    # the POE order is the decision (clinician, 2026-10-25).
 }
 
 # procedureevents d_items.category whose every item is a decision.
@@ -107,12 +131,24 @@ PROCEDURE_ITEMS: dict[int, tuple[str, str]] = {
     229996: (MEDICATION, "INHALED"),  # Nitrous Oxide
     225464: (PROCEDURE, "CARDIOVERSION"),  # Cardioversion/Defibrillation
     **dict.fromkeys((
-        225399, 225400, 225428, 225429, 225430, 225433, 225434, 225439, 225442, 225445, 225446, 225447,
-        225449, 225450, 225479, 226236, 226474, 226475, 226476, 226477, 227550, 227551, 227711, 227712,
-        227713, 227714, 229501, 229576, 229580, 229585, 229586,
-    ), (PROCEDURE, None)),  # 4-Procedures except tests (EEG, EKG, EMG), screens, cath lab transfers
-    229351: (PROCEDURE, "CATHETER"),  # Foley Catheter
+        225399, 225400, 225429, 225430, 225433, 225434, 225439, 225442, 225445, 225446, 225447,
+        225449, 225450, 225479, 226474, 226475, 226476, 226477, 227550, 227551,
+        227713, 229501, 229576, 229580, 229585, 229586,
+    ), (PROCEDURE, None)),  # 4-Procedures except tests (EEG, EKG, EMG), screens, cath lab transfers, removals
+    **dict.fromkeys((225456, 225467, 225478, 230174), (PROCEDURE, None)),  # ventricular drain, chest opened,
+    # operation, nerve block in OR
+    229351: (PROCEDURE, "CATHETER"),  # Foley Catheter: interval end = removal
+    230133: (PROCEDURE, "CATHETER"),  # Fecal Management System (Internal)
+    **dict.fromkeys((226236, 225428, 227711, 227712, 227714), (EQUIPMENT_REMOVAL, None)),  # pacer wires D/C,
+    # Blakemore D/C, drain / chest tube / pericardial drain removed
+    229620: (MEDICATION, "BLOOD_PRODUCT"),  # Massive Transfusion
 }
+
+# inputevents items given outside the ICU or documenting intake: not ICU decisions.
+INPUT_NOT_DECISION = (
+    225173, 226361, 226362, 226363, 226364, 226365, 226367, 226368, 226369, 226370, 226371, 226372,
+    226375, 226376, 226377, 226452, 227070, 227071, 227072,  # OR / PACU / cath lab / PO / pre-admission
+)
 
 INPUT_ORDER_CATEGORIES: dict[str, tuple[str, str | None]] = {
     "01-Drips": (MEDICATION, "DRIP"),
@@ -161,6 +197,21 @@ POE_SUBTYPES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("IV therapy", "IV access"): (PROCEDURE, "LINE"),
     ("IV therapy", "IV access request"): (PROCEDURE, "LINE"),
     ("Critical Care", "Suspected VAP Pathway"): (NOT_DECISION, None),
+    ("Cardiology", "Cardiac Cath"): (PROCEDURE, "INTERVENTIONAL"),
+    ("Radiology", "Interventional Radiology"): (PROCEDURE, "INTERVENTIONAL"),
+    ("Radiology", "Interventional Neuro"): (PROCEDURE, "INTERVENTIONAL"),
+    ("Radiology", "Cross-Sectional Interventional Radiology"): (PROCEDURE, "INTERVENTIONAL"),
+    ("Respiratory", "Extubate"): (PROCEDURE, "AIRWAY"),
+    ("General Care", "Neuraxial Procedure <b>(Anesthesia Only)</b>"): (PROCEDURE, None),
+    ("General Care", "Tubes/Drains"): (PROCEDURE, None),
+    ("General Care", "Dialysis"): (DEVICE_SETTING, "DIALYSIS"),
+    ("General Care", "Therapeutic devices/DVT/Prophylaxis"): (DEVICE_SETTING, "COMPRESSION"),
+    ("General Care", "NICU Discharge Order"): (PATIENT_MOVEMENT, None),
+    ("IV therapy", "Flushes"): (MEDICATION, None),
+    ("Nutrition", "Tubefeeding Order"): (MEDICATION, "NUTRITION"),
+    ("Nutrition", "Calorie count"): (TEST_ORDER, "MONITORING"),
+    ("OB", "Fetal monitoring"): (TEST_ORDER, "MONITORING"),
+    ("OB", "CMFM"): (CONSULT, None),  # maternal-fetal medicine
     ("General Care", "Telemetry"): (TEST_ORDER, "MONITORING"),
     ("General Care", "Telemetry: Cardiac, cont SpO2"): (TEST_ORDER, "MONITORING"),
     ("General Care", "Vitals/Monitoring"): (TEST_ORDER, "MONITORING"),
@@ -177,6 +228,7 @@ def _row(source: Source, group: str, key, label, category: str, subcategory: str
 def _d_items(con, store: Path) -> list[dict]:
     """chartevents / inputevents / procedureevents items."""
     settings = {itemid: device for device, itemids in SETTING_ITEMS.items() for itemid in itemids}
+    removals = {itemid: kind for kind, itemids in REMOVAL_ITEMS.items() for itemid in itemids}
     rows = []
     items = con.sql(
         f"SELECT itemid, label, linksto, category FROM '{store}/icu/d_items.parquet' "
@@ -185,15 +237,19 @@ def _d_items(con, store: Path) -> list[dict]:
     for itemid, label, linksto, item_group in items:
         group = f"{linksto}/{item_group}"  # e.g. 'chartevents/Routine Vital Signs'
         if linksto == "inputevents":
-            rows.append(_row(Source.D_ITEMS, group, itemid, label, MEDICATION, drug=drug_key(label)))
+            category = NOT_DECISION if itemid in INPUT_NOT_DECISION else MEDICATION
+            rows.append(_row(Source.D_ITEMS, group, itemid, label, category, drug=drug_key(label)))
             continue
         if linksto == "procedureevents":
             default = PROCEDURE_GROUPS.get(item_group, (NOT_DECISION, None))
             category, subcategory = PROCEDURE_ITEMS.get(itemid, default)
             rows.append(_row(Source.D_ITEMS, group, itemid, label, category, subcategory))
             continue
-        device = settings.get(itemid)
-        default = (DEVICE_SETTING, device) if device else (NOT_DECISION, None)
+        default = (NOT_DECISION, None)
+        if itemid in settings:
+            default = (DEVICE_SETTING, settings[itemid])
+        if itemid in removals:
+            default = (EQUIPMENT_REMOVAL, removals[itemid])
         category, subcategory = CHARTED_ITEMS.get(itemid, default)
         rows.append(_row(Source.D_ITEMS, group, itemid, label, category, subcategory))
     return rows

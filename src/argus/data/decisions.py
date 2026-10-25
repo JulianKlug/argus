@@ -43,6 +43,9 @@ _STOP_STATUSES = frozenset({"Stopped", "Paused"})  # inputevents: clinician stop
 _MAIN_COMPONENT = "Main order parameter"  # inputevents drug row; diluents are "Mixed solution"
 _BAG_CHANGE_GAP = pd.Timedelta(minutes=10)  # 90% of drip segments are contiguous, p90 gap 3 min
 _POINT_EVENT = pd.Timedelta(minutes=1)  # procedureevents point events (intubation) last 1 min
+_UNPLANNED = "Unplanned"  # charted removal reason prefix: accident, not a decision
+_REMOVED_AT_END = frozenset({"CATHETER"})  # procedure subcategories whose interval end is the removal
+_STOPPED_AT_END = frozenset({DecisionCategory.DEVICE_SETTING, DecisionCategory.MEDICATION})
 _LINK_SLACK = pd.Timedelta(hours=1)  # infusion may start shortly before its prescription
 _BASE_DRUG_TYPE = "BASE"  # diluent of a prescription, not a decision on its own
 _PRESCRIBED_ORDER_TYPE = "Medications"  # poe New/Change duplicate prescriptions
@@ -90,11 +93,12 @@ def decisions(
 
 
 def _charted(chart: pd.DataFrame, catalog: DecisionCatalog, start: pd.Timestamp) -> pd.DataFrame:
-    """Charted decisions (device settings, PCA/epidural rates, restraints...): first value in window
+    """Charted decisions (device settings, PCA/epidural rates...): first value in window
     (START / CONTINUE / CHANGE), then every change.
 
     e.g. PEEP 5 before window, 5 at 01:00, 5 at 02:00, 8 at 03:00 -> CONTINUE 01:00, CHANGE 03:00.
     Previous value = last one charted in the same ICU stay.
+    Equipment removals: every in-window charting is a STOP, except unplanned (accidental) ones.
     """
     classes = catalog.classify(Source.D_ITEMS, chart["itemid"])
     rows = chart.assign(**{SUBCATEGORY: classes[SUBCATEGORY], _CATEGORY: classes[CATEGORY]})
@@ -113,6 +117,11 @@ def _charted(chart: pd.DataFrame, catalog: DecisionCatalog, start: pd.Timestamp)
     action[first & ~no_prior & changed] = DecisionAction.CHANGE
     action[first & ~no_prior & ~changed] = DecisionAction.CONTINUE
     action[first & no_prior] = DecisionAction.START
+
+    removal = rows[_CATEGORY] == DecisionCategory.EQUIPMENT_REMOVAL
+    planned = ~rows["value"].astype("string").str.startswith(_UNPLANNED).fillna(False).astype(bool)
+    action[removal] = None
+    action[removal & rows[_IN_WINDOW] & planned] = DecisionAction.STOP
 
     rows[ACTION] = action
     return rows[action.notna()]
@@ -200,19 +209,26 @@ def _link_prescriptions(rows: pd.DataFrame, prescriptions: pd.DataFrame, catalog
 
 
 def _procedures(procedures: pd.DataFrame, catalog: DecisionCatalog) -> pd.DataFrame:
-    """Device / inhaled-drug intervals: START at starttime, STOP at visible endtime.
+    """procedureevents: START at starttime; STOP at visible endtime for device / inhaled-drug intervals.
 
-    Point events (intubation, extubation: 1 min) only START.
+    Point events (intubation: 1 min) only START. Removal items (chest tube removed) STOP at starttime.
+    Catheter interval end (Foley) -> EQUIPMENT_REMOVAL STOP. Line interval ends are not emitted:
+    the charted line discontinuation records the removal (with its reason).
     """
     classes = catalog.classify(Source.D_ITEMS, procedures["itemid"])
     rows = procedures.assign(**{_CATEGORY: classes[CATEGORY], SUBCATEGORY: classes[SUBCATEGORY]})
     rows = rows[rows[_CATEGORY].notna()]
 
-    starts = rows.assign(**{ACTION: DecisionAction.START})
-    is_interval = (rows["endtime"] - rows["starttime"]) > _POINT_EVENT
-    stops = rows[is_interval.fillna(False).astype(bool)].assign(**{ACTION: DecisionAction.STOP})
-    stops[EVENT_TIME] = stops["endtime"]
-    return pd.concat([starts, stops])
+    removal = rows[_CATEGORY] == DecisionCategory.EQUIPMENT_REMOVAL
+    starts = rows.assign(**{ACTION: removal.map({True: DecisionAction.STOP, False: DecisionAction.START})})
+
+    is_interval = ((rows["endtime"] - rows["starttime"]) > _POINT_EVENT).fillna(False).astype(bool)
+    removed_at_end = rows[SUBCATEGORY].isin(_REMOVED_AT_END)
+    ends = rows[is_interval & (rows[_CATEGORY].isin(_STOPPED_AT_END) | removed_at_end)].copy()
+    ends[ACTION] = DecisionAction.STOP
+    ends[EVENT_TIME] = ends["endtime"]
+    ends.loc[removed_at_end[ends.index], _CATEGORY] = DecisionCategory.EQUIPMENT_REMOVAL
+    return pd.concat([starts, ends])
 
 
 def _prescriptions(prescriptions: pd.DataFrame, poe: pd.DataFrame) -> pd.DataFrame:

@@ -12,6 +12,8 @@ separated from the evidence:
 - **Test orders**: labs, microbiology, imaging, ECG/echo, monitoring. Never results.
 - **Procedures**: lines, airway (intubation, extubation, tracheostomy), drains, restraints, ...
 - **Consults** and **patient movements** (admission, transfer, discharge orders).
+- **Equipment removals**: lines, catheters, drains, pacer wires (planned or for a complication;
+  accidental removals are not decisions).
 
 All categories are always returned; which ones are evaluated is configured in the evaluation
 layer, not here.
@@ -41,7 +43,8 @@ Hence an explicit catalog, clinician-reviewed, with a coverage test.
 ### Public API additions
 
 ```python
-class DecisionCategory(Enum): MEDICATION, DEVICE_SETTING, TEST_ORDER, PROCEDURE, CONSULT, PATIENT_MOVEMENT
+class DecisionCategory(Enum): MEDICATION, DEVICE_SETTING, TEST_ORDER, PROCEDURE, CONSULT, PATIENT_MOVEMENT,
+                              EQUIPMENT_REMOVAL
 class DecisionAction(Enum):   ORDER, START, CHANGE, CONTINUE, STOP
 
 @dataclass(frozen=True)
@@ -68,12 +71,16 @@ In window iff `start < event_time <= at`.
 | MEDICATION | poe Medications, `D/C` or `H` | STOP; label = discontinued drug |
 | any | poe other types per catalog `(order_type, order_subtype)` (Lab → TEST_ORDER at order time, Consults → CONSULT, ADT → PATIENT_MOVEMENT) | New ORDER, Change CHANGE, D/C or H STOP |
 | any (settings, PCA/epidural/inhaled meds, restraints) | chartevents items per catalog | per `(stay_id, itemid)`: first in window START (no prior value in stay), CONTINUE (equal), CHANGE (different); later in-window change CHANGE |
-| any (ventilation, dialysis, lines, airway, procedures) | procedureevents per catalog | START at `starttime`; STOP at visible `endtime` when duration > 1 min |
+| any (ventilation, dialysis, lines, airway, procedures) | procedureevents per catalog | START at `starttime`; STOP at visible `endtime` (> 1 min) for DEVICE_SETTING / MEDICATION intervals |
+| EQUIPMENT_REMOVAL | chartevents "<line> Discontinued" / "Reason Discontinued" | STOP each charting in window; value `Unplanned…` (accident) skipped |
+| EQUIPMENT_REMOVAL | procedureevents removal items (chest tube removed, pacer wires D/C); catheter interval end (Foley) | STOP at `starttime` / `endtime`. Line interval ends not emitted: the charted discontinuation records them (87% overlap within 2 h) |
 | TEST_ORDER | labevents, one row per `specimen_id` | ORDER at draw time; label = tests; result columns absent |
 | TEST_ORDER | microbiologyevents, one row per `micro_specimen_id` | ORDER at collection; label = specimen + tests; result columns absent |
 
 Not decisions: emar (execution), poe Medications New/Change (duplicates prescriptions), tests charted
-in chartevents/procedureevents (imaging, cultures, ECG: execution of poe orders), alarm limits.
+in chartevents/procedureevents (imaging, cultures, ECG: execution of poe orders), alarm limits,
+charted copies of POE orders (line / restraints ordered, consult checkboxes, called out, transfers):
+the POE order is the decision. CRRT anticoagulation (heparin, citrate) is a DEVICE_SETTING.
 A lab appears twice: poe Lab order (order time, no test names) and labevents specimen (draw time, test names);
 MIMIC has no key between them.
 
@@ -128,7 +135,8 @@ for the infusion link.
 10. Real data: criterion 1 on 200 seeded samples; p95 `get_window` ≤ 2 s warm.
 11. `argus.data.__all__` gains exactly `DecisionWindow`, `DecisionCategory`, `DecisionAction`.
 12. Charted non-setting decisions (PCA rate, restraints) follow criterion 2 under their catalog category.
-13. poe Lab → TEST_ORDER, Consults → CONSULT, ADT → PATIENT_MOVEMENT, at order time; line removal → PROCEDURE STOP.
+13. poe Lab → TEST_ORDER, Consults → CONSULT, ADT → PATIENT_MOVEMENT, at order time.
+14. Planned / complication line removal → EQUIPMENT_REMOVAL STOP; unplanned removal → none; Foley interval end → EQUIPMENT_REMOVAL STOP.
 
 ## Residual Risks
 
