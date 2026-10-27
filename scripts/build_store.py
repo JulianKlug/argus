@@ -76,6 +76,11 @@ TABLE_TYPES = {
     "icu/outputevents": {"value": "DOUBLE"},
 }
 
+# Note text averages 1-10 kB: default 122,880-row groups make one subject's read
+# decompress ~1 GB. 2048 rows cut per-subject note reads ~4x at equal file size.
+FREE_TEXT_ROW_GROUP_SIZE = 2048
+FREE_TEXT_TABLES = frozenset({"note/discharge", "note/radiology"})
+
 
 def _read_checksums(path: Path) -> dict[str, str]:
     """Parse `<sha256> <path relative to source>` lines."""
@@ -167,7 +172,7 @@ def _parquet_rows(con, parquet_path: Path) -> int:
     ).fetchone()[0] or 0
 
 
-def _convert(con, csv_path: Path, parquet_path: Path, table_types: dict[str, str]) -> dict:
+def _convert(con, csv_path: Path, parquet_path: Path, table_types: dict[str, str], parquet_options: str) -> dict:
     """Write one Parquet file atomically; return its manifest counts."""
     columns = _header(csv_path)
     read_sql = _read_csv_sql(csv_path, columns, table_types)
@@ -184,7 +189,7 @@ def _convert(con, csv_path: Path, parquet_path: Path, table_types: dict[str, str
     con.execute(
         f"COPY (SELECT file_row_number AS {ROW_COLUMN}, * EXCLUDE (file_row_number) "
         f"FROM read_parquet('{unsorted_path}', file_row_number=true) {order_sql}) "
-        f"TO '{tmp_path}' (FORMAT parquet, COMPRESSION zstd)"
+        f"TO '{tmp_path}' (FORMAT parquet, COMPRESSION zstd{parquet_options})"
     )
     unsorted_path.unlink()
 
@@ -231,7 +236,9 @@ def build(source: Path, dest: Path, checksum_files: list[Path]) -> dict:
             continue
 
         print(f"convert {key}", flush=True)
-        manifest[key] = {"sha256": digests[key], **_convert(con, csv_path, parquet_path, TABLE_TYPES.get(key, {}))}
+        parquet_options = f", ROW_GROUP_SIZE {FREE_TEXT_ROW_GROUP_SIZE}" if key in FREE_TEXT_TABLES else ""
+        counts = _convert(con, csv_path, parquet_path, TABLE_TYPES.get(key, {}), parquet_options)
+        manifest[key] = {"sha256": digests[key], **counts}
 
         # Persist after each table so an interrupted build resumes.
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))

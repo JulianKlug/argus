@@ -103,3 +103,23 @@ def test_row_index_is_source_order_and_file_sorted_by_subject(tmp_path):
     assert rows == [(1, 1, "n1"), (3, 1, "n3"), (2, 2, "n2"), (0, 3, "n0")]
     manifest = json.loads((tmp_path / "store" / build_store.MANIFEST_FILE).read_text())
     assert manifest["note/radiology"]["source_rows"] == 4
+
+
+def test_free_text_tables_use_small_row_groups(tmp_path):
+    """protects=one subject's note read decompresses few notes (latency criterion 13);
+    fails_when=note text written in default 122,880-row groups;
+    no_claim=actual latency (measured by the real_data latency tests)."""
+    rows = build_store.FREE_TEXT_ROW_GROUP_SIZE + 1
+    data = FixtureData()
+    for i in range(rows):
+        data.add("note/discharge", note_id=f"n{i}", subject_id=i, hadm_id=1, note_type="DS", note_seq=1, text="t")
+    write_source(tmp_path / "source", data)
+    build_store.build(tmp_path / "source", tmp_path / "store", [])
+
+    sizes = duckdb.sql(
+        f"SELECT DISTINCT row_group_id, row_group_num_rows "
+        f"FROM parquet_metadata('{tmp_path}/store/note/discharge.parquet')"
+    ).fetchall()
+
+    assert max(size for _, size in sizes) <= build_store.FREE_TEXT_ROW_GROUP_SIZE
+    assert sum(size for _, size in sizes) == rows
