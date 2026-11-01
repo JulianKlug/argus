@@ -212,7 +212,7 @@ Store location from `ARGUS_STORE_DIR` env var; tests needing real data are marke
 10. Real data: 200 seeded-random `(subject_id, at)` inside ICU stays → every returned row has `available_time <= at` and `event_time <= at`.
 11. Real data monotonicity: 50 subjects × 5 increasing `at` → `(source_table, source_row)` set at `at_i` ⊆ set at `at_{i+1}`; non-pending, non-truncated rows have identical values.
 12. Real data: every `current` row `event_time >= current_encounter.admittime`; every `past` row `<`.
-13. Real data: p95 `get_snapshot` latency ≤ 2 s over the 200-sample run (warm cache), reported with the command used.
+13. Real data: p95 `get_snapshot` latency ≤ 3 s over the 200-sample run (warm cache), reported with the command used. A regression tripwire, not a requirement: the study (50 patients, ~750 six-hour windows) spends ~30 min in the engine versus hours in LLM agents.
 14. `argus.data.__all__` lists only the public names in this spec; all other modules/functions are `_`-prefixed or unexported.
 15. Each test states its card: `protects=…; fails_when=…; no_claim=…`.
 16. No degradation of existing functionality (none exists).

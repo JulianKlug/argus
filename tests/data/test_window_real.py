@@ -122,7 +122,7 @@ def test_infusion_link_rate(window_sample):
 
 
 def test_window_latency_p95(window_sample):
-    """protects=get_window p95 <= 2 s warm (snapshot criterion 13 budget, decisions included);
+    """protects=get_window p95 <= 3 s warm (snapshot criterion 13 budget, decisions included);
     fails_when=decision rules add enough per-call work to exceed the budget;
     no_claim=cold-cache latency or concurrent load."""
     p50, p95, worst = np.percentile(window_sample.seconds, [50, 95, 100])

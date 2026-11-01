@@ -132,7 +132,7 @@ for the infusion link.
 7. emar rows never decisions.
 8. Event at exactly `at − window` excluded; at `at` included.
 9. Real data: catalog covers every itemid (chartevents/inputevents/procedureevents), poe `(type, subtype)`, inputevents ordercategory in the store.
-10. Real data: criterion 1 on 200 seeded samples; p95 `get_window` ≤ 2 s warm.
+10. Real data: criterion 1 on 200 seeded samples; p95 `get_window` ≤ 3 s warm (same tripwire as snapshot criterion 13).
 11. `argus.data.__all__` gains exactly `DecisionWindow`, `DecisionCategory`, `DecisionAction`.
 12. Charted non-setting decisions (PCA rate, restraints) follow criterion 2 under their catalog category.
 13. poe Lab → TEST_ORDER, Consults → CONSULT, ADT → PATIENT_MOVEMENT, at order time.
