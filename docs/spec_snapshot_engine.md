@@ -86,6 +86,7 @@ class SnapshotEngine:
 class Demographics:
     sex: str
     age_at_t: int                  # anchor_age + (at.year - anchor_year)
+    care_years: tuple[int, int]    # real years of `at`: anchor_year_group + (at.year - anchor_year)
     race: str | None
     language: str | None
     insurance: str | None
@@ -173,7 +174,7 @@ columns below. `caregiver_id`, `provider_id`, `order_provider_id`, `enter_provid
 | icustays | ENCOUNTERS + header | `intime <= at` | `outtime > at` → `outtime, los, last_careunit` null |
 | transfers | ENCOUNTERS | `intime <= at` | `outtime > at` → null |
 | services | ENCOUNTERS | `transfertime <= at` | — |
-| patients | Demographics | — | `dod`, `anchor_year_group` dropped; `age_at_t` computed |
+| patients | Demographics | — | `dod` dropped; `age_at_t`, `care_years` computed (selects guidelines in force; static, no leak) |
 
 Not exposed: `provider`, `caregiver` (ID lists); `d_*` used only for labels.
 

@@ -469,14 +469,15 @@ def test_transfers_and_services_from_start_time():
     assert _rows(timeline, Table.SERVICES) == [0]
 
 
-def test_patient_drops_dod_and_computes_age():
-    """protects=date of death never exposed; age shifted to `at` year;
-    fails_when=dod/anchor_year_group present or age uses anchor_age unshifted;
-    no_claim=age accuracy beyond MIMIC's anchor scheme."""
+def test_patient_drops_dod_and_computes_age_and_care_years():
+    """protects=date of death never exposed; age and real care years shifted to `at` year;
+    fails_when=dod present, age uses anchor_age unshifted, or care years not shifted from anchor_year;
+    no_claim=age or year accuracy beyond MIMIC's anchor scheme."""
     timeline = _timeline()
     patient = timeline.patient()
-    assert "dod" not in patient and "anchor_year_group" not in patient
+    assert "dod" not in patient
     assert timeline.age_at(patient) == 62  # 60 + (2180 - 2178)
+    assert timeline.care_years_at(patient) == (2016, 2018)  # "2014 - 2016" + (2180 - 2178)
 
 
 def test_split_by_current_admittime():

@@ -80,6 +80,7 @@ class SnapshotEngine:
         return Demographics(
             sex=patient["gender"],
             age_at_t=timeline.age_at(patient),
+            care_years=timeline.care_years_at(patient),
             race=_optional(admission["race"]),
             language=_optional(admission["language"]),
             insurance=_optional(admission["insurance"]),

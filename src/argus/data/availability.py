@@ -33,6 +33,7 @@ _ADMISSION_OUTCOME_COLUMNS = ("dischtime", "deathtime", "discharge_location", "h
 _ICUSTAY_END_COLUMNS = ("outtime", "los", "last_careunit")
 _INTERVAL_END_COLUMNS = ("endtime", "statusdescription")
 _POE_HIDDEN_COLUMNS = ["order_status"]
+_YEAR_GROUP_SEPARATOR = "-"  # anchor_year_group, e.g. "2014 - 2016"
 
 # Detail table -> (parent table, join key). Detail rows inherit the parent's visibility.
 _DETAIL_PARENTS = {
@@ -127,16 +128,25 @@ class Timeline:
     # ── public API ────────────────────────────────────────────────────────
 
     def patient(self) -> pd.Series:
-        """Patient row without `dod` / `anchor_year_group`; raises if subject unknown."""
+        """Patient row without `dod`; raises if subject unknown."""
         patients = self._raw(Table.PATIENTS)
         if patients.empty:
             raise SubjectNotFoundError(f"subject_id {self._subject_id} not in store")
 
-        return patients.iloc[0].drop(["dod", "anchor_year_group"])
+        return patients.iloc[0].drop(["dod"])
 
     def age_at(self, patient: pd.Series) -> int:
         """anchor_age + (at.year - anchor_year)."""
         return int(patient["anchor_age"] + (self._at.year - patient["anchor_year"]))
+
+    def care_years_at(self, patient: pd.Series) -> tuple[int, int]:
+        """Real calendar years `at` may fall in: anchor_year_group shifted by (at.year - anchor_year).
+
+        e.g. group "2014 - 2016", anchor_year 2178, at 2180 -> (2016, 2018). Picks the guidelines in force.
+        """
+        shift = self._at.year - int(patient["anchor_year"])
+        first, last = (int(year) for year in patient["anchor_year_group"].split(_YEAR_GROUP_SEPARATOR))
+        return first + shift, last + shift
 
     def current_encounter(self) -> Encounter:
         """D7 ICU check, then D2 admission containing `at`."""

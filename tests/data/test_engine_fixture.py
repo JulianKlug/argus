@@ -148,6 +148,7 @@ def test_snapshot_header_and_split(engine):
     snapshot = engine.get_snapshot(SUBJECT, AT.to_pydatetime())
 
     assert snapshot.demographics.sex == "F" and snapshot.demographics.age_at_t == 62
+    assert snapshot.demographics.care_years == (2016, 2018)
     assert snapshot.demographics.marital_status == "WIDOWED"  # current, not prior admission
     assert snapshot.current_encounter.hadm_id == CURRENT_HADM and snapshot.current_encounter.stay_id == 1000
     admittime = pd.Timestamp(snapshot.current_encounter.admittime)

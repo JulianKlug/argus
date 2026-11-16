@@ -13,6 +13,7 @@ from argus.data.domains import DecisionCategory, Domain
 class Demographics:
     sex: str
     age_at_t: int  # anchor_age + (at.year - anchor_year)
+    care_years: tuple[int, int]  # real calendar years of `at`, 3-year range: anchor_year_group shifted
     race: str | None
     language: str | None
     insurance: str | None
