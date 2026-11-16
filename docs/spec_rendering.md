@@ -4,54 +4,47 @@
 
 ARGUS agents evaluate clinical decisions within sequential 6 h ICU windows. D1 provides a leak-free patient snapshot, D2 separates decisions from the available clinical evidence, and D4 provides provider-independent token counting and LLM inference.
 
-D5 converts a `DecisionWindow` into deterministic, clinically readable prompt text that fits the configured models' context budgets.
+D5 converts a `DecisionWindow` into deterministic, clinically readable text that fits the configured models' context budgets.
 
 The renderer must preserve the distinction between **decisions**, **observed evidence**, and **missing or unavailable information**. It must not introduce hindsight information, silently discard decisions, or make clinical interpretations.
 
-The ordering and quantity of information are important experimental variables. Hager et al. (2024), cited in the literature review, report model sensitivity to information order and quantity. D5 therefore fixes rendering order, selection rules and budgets before agent development.
+Information order and quantity are experimental variables: Hager et al. (2024) report model sensitivity to both. D5 therefore fixes rendering order, selection rules and budgets before agent development.
 
-The roadmap exit criterion is:
+Roadmap exit criterion:
 
 > Token count per domain measured on real windows per configured tokenizer; budget fixed for trends, notes and past admissions.
-
-D5 must satisfy this criterion while providing an auditable input representation for A1 through A7 and the retrospective validation study.
 
 ## Design
 
 ```
-SnapshotEngine.get_window(...)
-         |
-         v
-    DecisionWindow
-         |
-         v
-  rendering/
-    format.py       Clinical formatting
-    trends.py       Deterministic trends
-    select.py       Record selection and budgets
-    references.py   Evidence references
-    renderer.py     Assembly and token counting
-         |
-         v
-    RenderedWindow
-      |       |
-      |       +-- Evidence reference map
-      |       +-- Token usage by section
-      |       +-- Selection and omission report
-      |
-      v
-  Prompt text
-      |
-      v
-  A1 / A2 / A3 / A5
-      |
-      v
-  D4 LlmClient
+SnapshotEngine.get_window(...)            config/rendering.toml
+         |                                        |
+         v                                        v
+    DecisionWindow ──────────────────►  Renderer(config, counters)
+                                                  |
+                     rendering/                   |
+                       timefmt.py     Relative clinical times
+                       escape.py      Untrusted free text
+                       references.py  Evidence reference IDs
+                       format.py      Record and decision lines
+                       trends.py      Descriptive statistics
+                       select.py      Ownership, priority, quotas
+                       renderer.py    Assembly, token counting
+                                                  |
+                                                  v
+                                           RenderedWindow
+                                     text | refs | tokens | omissions
+                                                  |
+                                                  v
+                                   A1 (wraps text in agent prompt)
+                                                  |
+                                                  v
+                                            D4 LlmClient
 ```
 
-D5 consumes only data exposed through the D1 and D2 public interfaces. It must not query the MIMIC store directly or implement its own time visibility rules.
+D5 consumes only the D1 and D2 public interfaces. It does not query the store and does not implement time visibility rules.
 
-D5 does not call an LLM. All rendering, selection and trend extraction are deterministic.
+D5 does not call an LLM. Rendering, selection and trend extraction are deterministic.
 
 ### Responsibilities
 
@@ -60,496 +53,500 @@ D5 does not call an LLM. All rendering, selection and trend extraction are deter
 | D1 | Clinical data visibility, redaction and snapshot assembly |
 | D2 | Identification and classification of decisions |
 | D4 | Token counting, model capabilities and request context enforcement |
-| D5 | Clinical text representation, record selection and evidence budgets |
+| D5 | Clinical text, record selection, evidence budgets, evidence references |
 | D8 | Agent communication, role access and evidence exchange |
-| A1 | Prompt assembly, run logging, execution and replay |
+| A1 | Agent prompt framing, request preflight, run logging and replay |
 | A2–A5 | Clinical interpretation, reasoning and output |
 
-D5 creates a clinical context block, not a complete agent prompt. Agent instructions, output schemas and collaboration messages are provided by later components.
+D5 produces **clinical data only**. It contains no instructions to the model. Framing such as "the record is retrospective and deidentified", "consider only information available at window end" or "a missing record is not evidence of an action not performed" belongs to A1's prompt templates.
 
 ## Public API
 
 New package: `src/argus/rendering/`.
 
 ```python
+class Section(Enum):
+    HEADER = "header"
+    DECISIONS = "decisions"
+    CURRENT_STATE = "current_state"
+    TRENDS = "trends"
+    RECENT_EVIDENCE = "recent_evidence"
+    NOTES = "notes"
+    PAST_ADMISSIONS = "past_admissions"
+    COVERAGE = "coverage"
+
+class RefKind(Enum):
+    RECORD = "record"        # one source row
+    DECISION = "decision"    # one D2 decision occurrence
+    TREND = "trend"          # statistics derived from several rows
+
 @dataclass(frozen=True)
-class RenderBudget:
-    max_tokens: int
-    trend_tokens: int
-    notes_tokens: int
-    past_tokens: int
+class SourceRow:
+    table: str               # Table.source_name
+    row: int                 # source_row
 
 @dataclass(frozen=True)
 class EvidenceRef:
-    source_table: str
-    source_row: int
+    kind: RefKind
+    sources: tuple[SourceRow, ...]          # exactly 1 for RECORD and DECISION; >= 1 for TREND
+    category: DecisionCategory | None       # DECISION only
+    action: DecisionAction | None           # DECISION only
 
 @dataclass(frozen=True)
 class RenderedWindow:
     text: str
-    evidence_refs: Mapping[str, EvidenceRef]
-    section_tokens: Mapping[str, Mapping[str, int]]
-    omissions: Mapping[str, int]
-    total_tokens: Mapping[str, int]
-    content_hash: str
+    refs: Mapping[str, EvidenceRef]                     # prompt ID -> reference
+    section_tokens: Mapping[Section, Mapping[str, int]] # section -> backend id -> tokens
+    total_tokens: Mapping[str, int]                     # backend id -> tokens of `text`
+    omissions: Mapping[Section, int]                    # records not rendered for budget
+    config_digest: str                                  # SHA256 of canonical config
+    content_hash: str                                   # SHA256 of UTF-8 `text`
 
-def render_window(
-    window: DecisionWindow,
-    *,
-    counters: Mapping[str, Callable[[str], int]],
-    budget: RenderBudget,
-) -> RenderedWindow:
-    ...
+class Renderer:
+    def __init__(self, config: RenderingConfig, counters: Mapping[str, Callable[[str], int]]) -> None: ...
+    def render(self, window: DecisionWindow) -> RenderedWindow: ...
 ```
 
-`counters` maps backend identifiers to the existing `LlmClient.count_text_tokens` method.
+`counters` maps backend IDs to `LlmClient.count_text_tokens`.
 
-The same rendered text must be usable across backends. When multiple counters are supplied, selection must fit the strictest token count.
+**Fixed tokenizer set.** `config/rendering.toml` lists the backend IDs whose tokenizers constrain rendering. The constructor raises `RenderingConfigError` unless `counters` has exactly those keys. The caller cannot change the set, so the same window always yields the same text, whichever backend later consumes it. This is what makes A7 arms comparable and A1 replay exact.
 
-`section_tokens` reports counts for every configured tokenizer. `total_tokens` counts the complete rendered text independently rather than assuming that section token counts are additive.
+Selection fits the strictest counter. `section_tokens` reports every counter; `total_tokens` counts the complete text and is not assumed to be the sum of sections.
 
-`content_hash` is a SHA256 digest of the final UTF-8 text, allowing A1 to verify the exact clinical input used during a run.
+`RenderingBudgetError` is raised when mandatory content cannot fit. No partial result is returned.
 
-A dedicated `RenderingBudgetError` is raised when mandatory content cannot fit. No partial result is returned as though it were complete.
+## Time representation
+
+MIMIC dates are shifted per patient; calendar dates such as 2180-03-14 are meaningless to the model and may mislead it. Intervals within a patient are preserved.
+
+All times are rendered **relative to the window end `at`**:
+
+| Offset | Rendering |
+|---|---|
+| < 24 h before `at` | `T-02:15` |
+| >= 24 h before `at` | `T-3d 04:15` |
+| At `at` | `T-00:00` |
+
+Durations use the same unit format, e.g. `duration 3d 02:00`.
+
+The header gives anchors: hours since hospital admission, hours since ICU admission and ICU day (day 1 = first 24 h). Past admissions are placed relative to the current admission, e.g. `admitted 412d before current admission, length of stay 6d`.
+
+`care_years` is the only calendar information rendered, for guideline-era context.
 
 ## Rendering structure
 
-The renderer always uses the following section order:
+Fixed section order:
 
-| Order | Section | Purpose |
-|---|---|---|
-| 1 | Window header | Decision time, observation boundary, demographics, current encounter |
-| 2 | Clinical decisions | All D2 decisions within the window |
-| 3 | Current clinical state | Latest available observations, medications, devices and relevant investigations |
-| 4 | Recent clinical evidence | Relevant visible records from the current admission |
-| 5 | Trends | Deterministic longitudinal summaries |
-| 6 | Notes | Available radiology reports and previous discharge notes |
-| 7 | Past admissions | Prior encounter and diagnostic history |
-| 8 | Coverage statement | Omitted counts, truncated content and missing information |
+| Order | Section | Content | Tier |
+|---|---|---|---|
+| 1 | Header | Window bounds, demographics, encounter anchors | Mandatory |
+| 2 | Decisions | All D2 decisions in the window | Mandatory |
+| 3 | Current state | Latest value of each core variable, ongoing intervals, pending tests | Optional, quota |
+| 4 | Trends | Statistics of core variable series | Optional, quota |
+| 5 | Recent evidence | Remaining current-admission records in the lookback | Optional, remainder |
+| 6 | Notes | Radiology reports, past discharge summaries | Optional, quota |
+| 7 | Past admissions | Prior encounters, diagnoses, procedures | Optional, quota |
+| 8 | Coverage | Omission counts, shortened notes, empty sections | Mandatory |
 
-The structure and section order are fixed by the rendering configuration. Empty sections are identified explicitly.
+Mandatory content is exactly sections 1, 2 and 8. Every section heading is always rendered; an empty section says `NO RECORDS AVAILABLE`.
 
-### 1. Window header
+Example (illustrative values only):
 
-The header contains:
+```
+=== WINDOW ===
+Decisions visible in (T-06:00, T-00:00]. Times relative to window end T.
+Patient: 67 y, F. Care years 2014-2016.
+Admission: EW EMER., hospital day 3 (T-2d 05:10). ICU: MICU, ICU day 2 (T-1d 08:40).
 
-- Decision window start, exclusive, and end, inclusive.
-- Patient age at the decision time and sex.
-- Current admission type and ICU admission time.
-- Current care unit information available through D1.
-- `care_years` range for historical guideline matching.
-- A statement that the clinical record is retrospective and deidentified.
-- A statement that only information available at the window end may be considered.
+=== DECISIONS ===
+[D7Q2KX1MA] T-04:50 MEDICATION START Norepinephrine (DRIP) 0.08 mcg/kg/min IV, order [E3HP0RT2C]
+[D9LAA02WF] T-01:10 TEST_ORDER ORDER Lactate; documented T-01:10, event T-07:30 (late)
 
-MIMIC shifted calendar dates must not be presented as actual historical treatment dates. The `care_years` range is the appropriate metadata for guideline era selection.
+=== CURRENT STATE ===
+[E5KM1ZQ0B] Heart Rate 118 bpm T-00:20
+[E0JX8W3NR] Lactate PENDING, drawn T-01:05
+[E2CC7YH4D] Norepinephrine 0.08 mcg/kg/min, ONGOING AT WINDOW END since T-04:50
+...
 
-Current encounter identifiers may be retained in the audit metadata but are not required in the prompt text.
+=== COVERAGE ===
+Recent evidence: 41 records omitted by rendering budget.
+Notes: 1 report shortened (IMPRESSION kept).
+```
 
-### 2. Clinical decisions
+Section markers (`=== NAME ===`) are reserved; see Escaping.
 
-All seven `DecisionCategory` values are rendered, regardless of the future evaluation configuration:
+### 1. Header
 
-1. `MEDICATION`
-2. `DEVICE_SETTING`
-3. `TEST_ORDER`
-4. `PROCEDURE`
-5. `CONSULT`
-6. `PATIENT_MOVEMENT`
-7. `EQUIPMENT_REMOVAL`
+- Window bounds as relative times: start exclusive, end inclusive.
+- Age at `at` and sex.
+- `care_years`.
+- Admission type, hospital admission anchor, ICU care unit, ICU admission anchor.
 
-Each decision must retain:
+**Excluded demographics:** `race`, `language`, `insurance` and `marital_status` are not rendered. They are not needed to judge ICU decisions and may introduce demographic bias into flags. Including them is a separate experimental condition (see Configuration).
 
-- A unique decision reference.
-- Decision category and action.
-- Human-readable clinical label and subcategory.
+Encounter identifiers are not rendered.
+
+### 2. Decisions
+
+All seven `DecisionCategory` values are rendered as subheadings, in enum order, including empty ones.
+
+Each decision line contains:
+
+- Decision ref ID.
 - Clinical decision time (`event_time`).
-- Time first available (`available_time`), where different.
-- Relevant dose, rate, quantity, route, unit or device setting when present.
-- The linked order reference where D2 supplies one.
-- The underlying source evidence reference.
+- Category and action, taken unchanged from D2.
+- Label and subcategory.
+- Dose, rate, amount, route, unit or setting, using a fixed per-source-table column whitelist in `format.py`.
+- Linked order ref ID when D2 supplies `order_table`/`order_row`.
+- `documented <time>` when `max(event_time, available_time)` differs from `event_time`, marked `(late)` when `event_time` precedes the window start.
 
-The valid actions are `ORDER`, `START`, `CHANGE`, `CONTINUE` and `STOP`.
+Order: `event_time`, then category enum order, then action enum order, then `source_table`, `source_row`.
 
-Actions are taken directly from D2 and must not be inferred again in D5.
+One source row yielding several decisions (e.g. procedure start and stop) gives several decision lines, each with its own decision ref, all pointing to the same `SourceRow`.
 
-Decisions are sorted chronologically by decision time. Ties use the fixed category order, action and source identity. The tie-breaking rule must be deterministic.
+No decision is ever dropped for budget. If sections 1, 2 and 8 alone exceed the total budget, rendering fails.
 
-**Late documentation:** A decision with `event_time` preceding the current window may still belong to that window if it first became visible during the window. Preserve both timestamps and identify the difference without moving the decision into an earlier window.
+### Record ownership
 
-**Duplicates:** A single source row may produce multiple decisions, such as a procedure start and stop. Each decision occurrence receives a distinct decision reference while retaining the same underlying evidence reference.
+A source record's full rendering appears **at most once** in the text. Ownership is assigned in this order; the first match wins:
 
-**Completeness:** All decisions are mandatory content. The renderer may use compact formatting but must not silently discard a decision to satisfy the token budget.
+1. **Decisions:** rows that are a decision's source row.
+2. **Current state:** latest visible record of each core variable; records with `is_truncated` (ongoing intervals); records with `is_pending`.
+3. **Trends:** remaining observations of core variables in the trend lookback. They are summarised, never listed individually.
+4. **Recent evidence:** remaining current-admission records with `event_time` in the recent lookback.
+5. **Notes:** `NOTES` domain records.
+6. **Past admissions:** `past` record frames, except notes.
 
-### 3. Current clinical state
+Other sections may cite an owned record by its ref ID but never repeat its content. Trend statistics cite the records they highlight.
 
-Represent the latest available clinical information relevant to interpreting the decisions, including:
+### Core variables
 
-- Vital signs and charted observations.
-- Available laboratory and microbiology results.
-- Medication orders and administrations.
-- Infusions, fluids, inputs and outputs.
-- Device settings and procedures.
-- Relevant current encounter and diagnostic information.
+A fixed list in `config/rendering.toml`, keyed by `(source table, itemid)` with a display label. The initial list:
 
-Use descriptive labels rather than MIMIC item identifiers.
-
-Preserve units, qualifiers and time information. Numeric values must not be converted unless an explicitly validated conversion rule exists.
-
-Missing values, pending tests and unfinished intervals require distinct representations:
-
-| State | Rendering |
+| Group | Variables |
 |---|---|
-| Observed value | Value, unit, clinical time and evidence reference |
-| Pending result | `PENDING`; no result value |
-| Missing value | `NOT RECORDED` |
-| Ongoing interval | `ONGOING AT WINDOW END` |
-| No visible records | `NO RECORDS AVAILABLE` |
-| Content omitted by budget | `RECORDS OMITTED BY RENDERING BUDGET` |
+| Vital signs | Heart rate, arterial and non-invasive mean BP, systolic BP, respiratory rate, SpO2, temperature |
+| Neurology | GCS eye, verbal, motor |
+| Respiratory support | FiO2, PEEP set, ventilator mode |
+| Labs | Lactate, creatinine, urea nitrogen, potassium, sodium, glucose, hemoglobin, platelets, WBC, bilirubin total, INR, arterial pH, pO2, pCO2 |
 
-A missing record must never be rendered as evidence that the clinical action was not performed.
+`scripts/measure_rendering.py` reports each core variable's presence rate. Changing the list changes `config_digest`.
 
-For ongoing infusions and procedures, D1 has already redacted future end times and adjusted interval values. D5 must present the visible state without reconstructing the original interval or future status.
+### 3. Current state
 
-Pending laboratory and microbiology records may identify the ordered or collected test, but must never expose withheld values, organisms, interpretations or susceptibility results.
+For each core variable, in list order: latest visible value, unit and time, or `NOT RECORDED` when no value exists in the current admission.
 
-### 4. Recent clinical evidence
+Then, in fixed domain order (inputs, medication administrations, procedures):
 
-Current admission data may cover substantially more than one 6 h window. Rendering the complete admission for every window would produce large, repetitive prompts.
+- Records with `is_truncated`: visible state with `ONGOING AT WINDOW END`. D1 has already clipped the interval; D5 never reconstructs end times, status or totals.
 
-D5 therefore applies a fixed selection policy:
+Then, in fixed domain order (labs, microbiology):
 
-- Include visible records belonging to the decision window first.
-- Include the latest available pre-window observation for clinical variables needed to establish context.
-- Prefer recent records over older records within the same evidence class.
-- Preserve clinically meaningful numeric values, units and timestamps.
-- Deduplicate repeated display of the same source record where possible.
-- Prioritise records directly referenced by rendered decisions.
-- Apply stable source identity as the final tie-breaker.
+- Records with `is_pending`: test identity, draw or collection time and `PENDING`. No value, organism, interpretation or susceptibility appears.
 
-Use the current 24 h period as the default lookback for recent observations. A pre-window baseline may be older when no value exists within that period.
+### 4. Trends
 
-This is a presentation policy, not a replacement for D1 visibility. The renderer receives the full snapshot and selects only what it displays.
+For each core variable with at least `trend_min_points` numeric observations sharing one unit within `trend_lookback` (default 24 h, ending at `at`):
 
-Records excluded because of the token budget must be counted in the omission report.
+- Count.
+- First, minimum, maximum with times and ref IDs.
+- Absolute change, latest minus first. Latest is cited by its ref ID in current state.
 
-### 5. Trends
+Observations with differing units form separate series; nothing is converted. Non-numeric, null or pending values are excluded from the statistics. No interpolation, no assumption of regular sampling.
 
-Trends provide compact longitudinal information without requiring the agents to process every repeated measurement.
+The trend's `TREND` ref lists every contributing `SourceRow`. Highlighted points get `RECORD` refs.
 
-D5 computes descriptive statistics only. It does not diagnose deterioration, evaluate treatment effectiveness, calculate severity scores, or determine whether care was appropriate.
+D5 computes descriptive statistics only: no severity scores, deterioration judgements or treatment-effect claims.
 
-For repeated numeric measurements sharing the same clinical label and compatible units, provide:
+### 5. Recent evidence
 
-- Number of available observations.
-- First and latest values with timestamps.
-- Minimum and maximum with timestamps.
-- Absolute change between first and latest values.
-- References to the observations supporting the displayed values.
+Records not owned earlier, with `event_time` in `recent_lookback` (default 24 h, ending at `at`), selected by:
 
-Default lookback: 24 h ending at `at`.
+1. Records with `event_time` in the window before pre-window records.
+2. Domain priority, fixed in config:
+   1. Medication administrations
+   2. Inputs
+   3. Labs
+   4. Microbiology
+   5. Outputs
+   6. Procedures
+   7. Medication orders
+   8. Orders
+   9. Charted observations
+   10. Encounters
+   11. Outpatient measurements
+3. Newest `event_time` first.
+4. `source_table`, `source_row`.
 
-A longer baseline may be included when required by the selection policy, with its age stated explicitly.
+Records are rendered grouped by domain, chronologically within a domain. Selection order and display order are distinct: selection decides *what* fits, display decides *how* it reads.
 
-Do not calculate a trend when values are incompatible, units differ, or too few numeric observations are available. Never interpolate missing measurements or assume regular sampling.
-
-If a trend aggregates several records, its reference metadata must identify all contributing source rows. Highlighted first, last, minimum and maximum values must also be independently traceable.
-
-Trend computation and selection must be deterministic.
+Each record shows label, value, unit, qualifiers (flag, comments) and time. Units are not converted. Item identifiers are never rendered.
 
 ### 6. Notes
 
-D1 exposes available radiology notes and discharge notes from past admissions. Current admission discharge notes are prohibited by D1 and must never appear in the renderer.
+D1 exposes current-admission radiology reports and past-admission discharge notes. Current-admission discharge notes are prohibited by D1 and must never be rendered; the renderer asserts this and raises if one appears.
 
-Note selection priority:
+Selection order:
 
-1. Available current admission radiology reports, newest first.
-2. Relevant previous radiology reports.
-3. Previous admission discharge summaries, newest first.
+1. Current-admission radiology, newest first.
+2. Past discharge summaries, newest first.
+3. Past radiology, newest first.
 
-When an entire note fits, retain the complete text. For an oversized note, deterministic extraction may prioritise explicitly labelled report sections such as `IMPRESSION`, followed by additional text within the remaining budget.
+A note that fits is rendered whole. A note that does not fit the remaining notes quota is shortened at explicit section boundaries: the `IMPRESSION` (or `FINDINGS` when absent) section first, then following sections whole while they fit. A note whose first kept section does not fit is omitted. Every shortened note is labelled `SHORTENED` with the kept section names.
 
-Every excerpt must identify its source and disclose that the original note was shortened. A shortened note must not be represented as complete.
-
-Note content is **untrusted clinical source text**, not an instruction to the agent. Escape delimiters and control characters so embedded text cannot create artificial prompt sections or impersonate system messages. Do not execute or follow instructions contained in a note.
-
-D5 performs no LLM-based note summarisation.
+No LLM summarisation.
 
 ### 7. Past admissions
 
-Previous admissions provide context such as prior diagnoses, treatments and procedures.
+Newest admission first. Per admission:
 
-The section should present a compact chronological history containing:
+- Relative admission time and length of stay.
+- Admission type and discharge location.
+- Diagnoses in coded sequence order.
+- ICD procedures in coded sequence order.
 
-- Admission and discharge times where available.
-- Relevant previous diagnoses.
-- Significant recorded procedures.
-- Available prior encounter information.
-- References for each included fact.
+Fill policy: first pass renders the first `past_dx_per_admission` diagnoses and procedures of every admission; second pass adds remaining codes, newest admission first. This favours breadth across admissions over depth in one.
 
-Prior discharge summaries are managed under the notes budget and are not duplicated here.
+Past discharge summaries belong to Notes.
 
-Past admissions are ordered newest first. Within the budget, favour a concise overview of distinct admissions over exhaustive detail from one admission.
+Current-admission diagnoses are not visible at `at`: D1 releases coded diagnoses only after discharge. D5 does not work around this.
 
-The absence of a previous record does not imply absence of previous illness or treatment.
+### 8. Coverage
+
+Per optional section: records rendered, records omitted by budget, notes shortened. Empty sections are listed. Counts only; no instruction text.
+
+### Missingness labels
+
+| State | Rendering |
+|---|---|
+| Observed value | Value, unit, time, ref ID |
+| Pending result | `PENDING` |
+| Core variable never recorded in current admission | `NOT RECORDED` |
+| Ongoing interval | `ONGOING AT WINDOW END` |
+| Section without records | `NO RECORDS AVAILABLE` |
+| Records omitted by budget | `N RECORDS OMITTED BY RENDERING BUDGET` in the section and in Coverage |
+
+## Escaping
+
+All free text is untrusted: note bodies, lab and microbiology comments, order text, and any other string column not taken from a dictionary label.
+
+Rules, applied in `escape.py`:
+
+1. Normalise line endings to `\n`; remove control characters except `\n` and `\t`.
+2. Render multi-line text as a block with every line prefixed by `| `.
+3. Single-line values containing `===` are rendered with the sequence replaced by `= = =`.
+
+Consequence: no untrusted text can produce a line starting with `===`, so it cannot open a section or impersonate structure. Escaping is structural only; it does not guarantee the model ignores embedded instructions (see Residual Risks).
 
 ## Evidence references
 
-Every rendered clinical fact must remain traceable to its source record.
+Prompt IDs are opaque, short and stable:
 
-Use compact opaque reference identifiers in the prompt rather than exposing MIMIC table names and source row indices to agents.
+| Kind | ID | Derivation |
+|---|---|---|
+| Record | `E` + 8 chars | Base32 of SHA256(`"{table}:{row}"`), truncated |
+| Decision | `D` + 8 chars | Base32 of SHA256(`"{table}:{row}:{category}:{action}:{event_time}"`), truncated |
+| Trend | `T` + index | Per-window sequence in render order |
 
-References must:
+Record and decision IDs are stable across windows for a fixed store version. Trend IDs are window-local.
 
-- Map to `(source_table, source_row)` in the original snapshot.
-- Remain stable for the same source record across windows.
-- Distinguish multiple decision occurrences derived from one record.
-- Support derived trends whose contributing records are multiple.
-- Be unambiguous and checked for collisions.
-- Allow later agent claims to cite evidence without knowing MIMIC schemas.
+Collisions: the renderer checks that every ID in a window maps to one key. A collision raises `RenderingError`; it is never resolved silently. The measurement script also reports any collision across all sampled windows. 40 bits gives a negligible collision probability at per-patient scale; a reported collision triggers a longer ID and a format version bump.
 
-The reference mapping is returned separately from prompt text. A1 persists it with the run records, while D8 defines how agent messages carry and validate citations.
-
-References alone must never be treated as an indication that the underlying source is clinically correct.
-
-The renderer must not generate claims, conclusions or inferred decision labels that are absent from the supplied records.
+The ref map is returned separately from the text. A1 persists it; D8 defines how agent claims cite it. A reference proves provenance, not clinical correctness.
 
 ## Token budget
 
-### Budget policy
+### Initial budgets
 
-D4 guarantees that requests are rejected before inference when the complete request exceeds the model's configured context limit.
+| Component | Initial tokens | Notes |
+|---|---:|---|
+| Total clinical text | 16,000 | Leaves room within the smallest configured context, 32,768 (mistral24) |
+| Current state | 3,000 | Quota |
+| Trends | 2,500 | Quota |
+| Notes | 3,000 | Quota |
+| Past admissions | 1,500 | Quota |
+| Recent evidence | Remainder | Total minus mandatory minus used quotas |
 
-D5 must stay within a smaller clinical text budget, leaving space for system instructions, output schemas, tool definitions, collaboration messages and model output.
+These are **starting values, not results**. Measurement (below) revises or confirms them; final values are fixed in `config/rendering.toml`.
 
-Initial configuration proposed for real-window measurement:
+### Enforcement
 
-| Component | Initial token budget |
-|---|---:|
-| Complete rendered clinical text | 16,000 |
-| Trends, maximum | 2,500 |
-| Notes, maximum | 3,000 |
-| Past admissions, maximum | 1,500 |
+1. Render mandatory sections (1, 2 and 8 with zero omissions). If over total with any counter, raise `RenderingBudgetError`.
+2. For each quota section in order (3, 4, 6, 7): add records in selection order while the section's rendered text fits its quota under every counter. Stop at the first record that does not fit.
+3. Recent evidence fills the remaining total in the same way.
+4. Re-render Coverage with final counts. Count the complete text with every counter.
+5. If the complete text exceeds the total (section boundaries or the coverage update can add tokens), remove recent-evidence records from the end of the selection order, then re-count. Repeat until it fits.
 
-The remaining budget is shared by the header, all decisions and current clinical evidence.
+Section fits are checked incrementally: each candidate record's line is counted once and running sums are used, with the exact section text re-counted only at the boundary. Step 5 runs only on overflow, so typical cost is one full-text count per counter.
 
-These values are **initial experimental limits, not measured results**. D5 must measure representative real windows and revise or confirm them before completion. The final values are fixed in version-controlled `config/rendering.toml`.
+No mandatory content is removed. Text is never cut at an arbitrary character or token position.
 
-The 16,000-token ceiling leaves room within the smallest currently configured local context of 32,768 tokens. It is not, on its own, proof that a complete agent request fits.
+Before inference, A1 counts the complete request with D4's `count_request_tokens()` and reserves output tokens. Any overflow there is reported, never fixed by altering clinical content.
 
-### Budget enforcement
+### Backend comparability
 
-1. Determine the active tokenizer or comparison set of tokenizers.
-2. Render mandatory content.
-3. If mandatory content exceeds the total limit, raise `RenderingBudgetError`.
-4. Select optional evidence using fixed priority and section quotas.
-5. Assemble all sections and the coverage statement.
-6. Measure the final complete text with each supplied tokenizer.
-7. If over budget, remove the lowest-priority optional record and repeat.
-8. Return text, token counts, references and the complete omission report.
-
-No mandatory decision may be removed.
-
-The renderer must not truncate text at an arbitrary character or token position. Record selection and any permitted note excerpting must respect explicit boundaries.
-
-`count_text_tokens()` measures the rendered clinical text. Before actual inference, A1 must additionally call D4's `count_request_tokens()` on the complete request, including schema, tools and conversation history, and reserve the configured output tokens.
-
-Any resulting context overflow must be reported, never handled by silently changing the content.
-
-### Comparable backend inputs
-
-A7 compares different LLM backends and collaboration strategies. Tokenization differences must not automatically create different patient evidence for otherwise matched experimental arms.
-
-When matched inputs are required, D5 renders one canonical text using the strictest supplied token counter. The exact same text is then used by each backend.
-
-Any experiment intentionally comparing different content budgets or ordering must record the rendering configuration and be identified as a separate experimental condition.
+The fixed tokenizer set means one canonical text per window. All backends in a matched A7 arm receive identical clinical content. Experiments that vary budgets, order, core variables or demographic inclusion use a different config and are recorded as separate conditions via `config_digest`.
 
 ## Configuration
 
-Add `config/rendering.toml`, with:
+`config/rendering.toml`:
 
-- Rendering format version.
-- Total clinical text budget.
-- Trends, notes and past admission budgets.
-- Recent evidence lookback.
-- Trend lookback.
-- Selection priorities and tie-breaking policy.
-- Note excerpt policy.
-- Section inclusion and ordering.
+- `format_version`.
+- `tokenizers`: backend IDs from `config/llm.toml`.
+- Budgets: total and per-section quotas.
+- `recent_lookback`, `trend_lookback`, `trend_min_points`, `past_dx_per_admission`.
+- Core variable list.
+- Recent evidence domain priority.
+- Note section priority (`IMPRESSION`, `FINDINGS`, ...).
+- `demographics`: `minimal` (age, sex; default) or `full`.
 
-Configuration must be validated strictly. Unknown keys, negative budgets and inconsistent limits cause an explicit error.
+Strict validation: unknown keys, negative values, quotas summing above the total, unknown backend IDs or duplicate core variables raise `RenderingConfigError`.
 
-No clinical data, credentials or model prompts are committed to this file.
-
-Changing the rendering configuration changes the experimental input and must be recorded in A1 and frozen in V1.
+No clinical data, credentials or prompts in this file. Any change alters `config_digest`; A1 records it and V1 freezes it.
 
 ## Real-window measurement
 
-Add `scripts/measure_rendering.py`.
+`scripts/measure_rendering.py`, using `SnapshotEngine.get_window()` and D4 counters only. No inference.
 
-It uses `SnapshotEngine.get_window()` and the existing D4 token-counting interface. No model inference is required.
+**Sample:**
 
-Measurement must include:
+- 200 seeded random valid ICU windows.
+- 50 high-volume windows: top 50 by visible current-admission record count among 2,000 seeded candidates.
 
-- At least 200 seeded random valid ICU windows from the real store.
-- An additional 50 high-volume windows selected by a documented record-volume criterion.
-- Every configured local backend tokenizer.
-- Unbudgeted section sizes, where feasible, and final budgeted sizes.
-- Counts and fractions of selected and omitted records.
-- Mandatory-content overflow and total budget failures.
-- The final full-text token count.
-- Render time.
+**Validation-cohort hygiene:** D6 does not exist yet. The script writes the sampled `subject_id` list, with seed and digest, to a local file outside Git. D6 must exclude these patients from the validation draw, so budgets are never tuned on validation patients.
 
-Report per section and backend:
+**Measured per window, per counter:**
 
-| Measure | Required |
-|---|---|
-| Number of windows | Yes |
-| Median tokens | Yes |
-| p95 tokens | Yes |
-| p99 tokens | Yes |
-| Maximum tokens | Yes |
-| Number of records selected | Yes |
-| Number of records omitted | Yes |
-| Windows exceeding section quota | Yes |
-| Windows failing mandatory budget | Yes |
+- Unbudgeted tokens per section and per `Domain` (all 14) and per `DecisionCategory` (all 7).
+- Budgeted tokens per section and total.
+- Records selected and omitted per section.
+- Mandatory overflow failures.
+- Core variable presence.
+- Reference ID collisions.
+- Render time, separately from `get_window()`.
 
-Measurements must include distributions for the seven decision categories and the thirteen snapshot domains, even when some domains contribute no text in the final format.
+**Reported per section and counter:** n, median, p95, p99, max tokens; selected and omitted records; windows hitting quota; mandatory failures; render time p50 and p95.
 
-Use a fixed seed and publish the command, configuration digest, model digests, store version and aggregate results.
+Committed reports (`docs/rendering_budget.md`) contain aggregates only: no patient text, no identifiers. They record command, seed, config digest, model digests and store version.
 
-Real patient text and record identifiers must not appear in measurement reports committed to Git.
-
-The final budgets are accepted only after measurement demonstrates that the selected policy is feasible on the sampled windows. All remaining overflows must be documented, and the runtime must still fail closed on an unseen oversized window.
+Budgets are accepted when measurement shows the policy is feasible on the sample. Residual mandatory overflows are documented; the runtime still fails closed on unseen windows.
 
 ## Acceptance Criteria
 
-1. **Determinism.** The same `DecisionWindow`, tokenizer set and rendering configuration produce byte-identical text, reference maps, omissions and token counts, independent of DataFrame input row order.
-
-2. **Visibility.** Every rendered clinical fact derives exclusively from the supplied D1 snapshot or D2 decision frames. No future evidence or independently queried store records enter the output.
-
-3. **Decision completeness.** Every D2 decision appears exactly once as a decision occurrence, with its correct category, action, time and underlying reference. All seven categories are represented, including empty categories.
-
-4. **Temporal correctness.** Late-recorded decisions preserve their clinical and availability times. Decision-time ordering is stable. Window boundaries remain those defined by D2.
-
-5. **Pending results.** Pending labs and microbiology display test identity and pending status without any withheld result value or interpretation.
-
-6. **Ongoing intervals.** Running infusions and procedures display only the clipped information available at `at`; future end times, status and total amounts are never reconstructed.
-
-7. **Missingness.** Pending, absent, omitted and ongoing records have distinct representations. An absent record is never described as an action not performed.
-
-8. **Reference integrity.** Every cited record maps back to the correct source row; repeated source rows and multi-action decisions are handled; trend contributor references can be reconstructed.
-
-9. **Trend correctness.** Synthetic measurement series produce the expected count, first, last, minimum, maximum and change. Incompatible units, missing values and pending results never enter numeric calculations.
-
-10. **Notes.** Current admission discharge notes never appear. Shortened notes are marked, text is escaped, and adversarial note content cannot modify the renderer's section structure.
-
-11. **Selection reproducibility.** Budget pressure leads to the same selected records and omissions on repeated runs. Any excluded content is disclosed by section.
-
-12. **Token accounting.** Section and complete-text counts are reported for every configured tokenizer. The complete rendered text respects all supplied tokenizer limits.
-
-13. **Mandatory overflow.** If mandatory content exceeds the budget, rendering fails explicitly. No decision is silently dropped or replaced with an incomplete list.
-
-14. **D4 compatibility.** Rendered output can be inserted into a D4 `Request`. Full request pre-counting enforces the configured context and output-token reserve without changing D4.
-
-15. **Backend comparability.** Given multiple tokenizer counters, the renderer produces identical clinical text for every backend in a matched comparison, fitting the strictest token budget.
-
-16. **Real-data measurement.** At least 250 seeded real windows are measured, including 50 high-volume windows. Token distributions and omission statistics are documented for each configured tokenizer and domain.
-
-17. **Fixed budgets.** The final trends, notes and past admission limits are written to `config/rendering.toml`, justified by measured data, and used unchanged by default.
-
-18. **Security.** No sensitive prompt text, note excerpts or evidence maps enter ordinary logs, exception messages, committed test outputs or public reports.
-
-19. **Regression.** D1, D2 and D4 existing tests remain green. No snapshot visibility, decision classification or LLM backend behaviour changes are required.
-
-20. **Performance.** Rendering latency is measured separately from `get_window()` and LLM inference. p50 and p95 results are reported for real windows; substantial overhead must be investigated before D5 is accepted.
+1. **Determinism.** Same window and config give byte-identical text, refs, omissions and token counts, independent of DataFrame row order.
+2. **Fixed tokenizer set.** Constructing a `Renderer` with counters different from the configured set fails.
+3. **Visibility.** Every rendered fact derives from the supplied snapshot or decision frames. Fixtures with planted future rows show none in the output.
+4. **Decision completeness.** Every D2 decision appears exactly once with correct category, action, times and refs. All seven category subheadings render, empty ones included.
+5. **Late documentation.** Late decisions show both times and the `(late)` mark; ordering follows the stated keys.
+6. **Ownership.** No source record's full rendering appears twice.
+7. **Pending and ongoing.** Pending tests show identity and `PENDING` only. Ongoing intervals show only D1's clipped state.
+8. **Missingness.** The six states in the table render distinctly.
+9. **Trends.** Synthetic series give the expected count, first, min, max and change. Mixed units split series. Null, non-numeric and pending values are excluded.
+10. **References.** Every ID maps to the correct `SourceRow`(s); decision occurrences from one row get distinct IDs; trend contributors are complete; a forced collision raises.
+11. **Relative time.** No shifted calendar date appears in the text.
+12. **Escaping.** Adversarial free text in notes, comments and order text cannot produce a `===` line or change section structure.
+13. **Notes.** A current-admission discharge note in the input raises. Shortened notes are labelled with kept sections.
+14. **Selection under pressure.** Repeated runs select and omit the same records; omissions are reported per section.
+15. **Budget.** The complete text fits the total under every counter; quota sections fit their quotas.
+16. **Mandatory overflow.** Oversized mandatory content raises `RenderingBudgetError`; no partial output.
+17. **Measurement.** 250 seeded real windows measured as specified; aggregates documented per counter, section, domain and category.
+18. **Fixed budgets.** Final values in `config/rendering.toml`, justified in `docs/rendering_budget.md`, used by default.
+19. **No leakage into logs.** Prompt text, note content and ref maps never appear in logs, exception messages or committed outputs.
 
 ## Testing Plan
 
 | Layer | Tests |
 |---|---|
-| Unit | Formatting, timestamps, missing values, units, stable ordering |
-| Unit | Decision completeness, duplicate source rows, start/stop actions |
-| Unit | Trends, null values, incompatible units, boundary measurements |
-| Unit | Evidence reference generation and reconstruction |
-| Unit | Token quotas, selection priorities, overflow refusal |
-| Unit | Notes, escaping, excerpt boundaries, malicious instructions |
-| Fixture integration | D1/D2 synthetic windows with planted future, pending and truncated data |
-| D4 integration | Multiple fake tokenizer counters and full request preflight |
-| Real data | Seeded window measurement and latency, `real_data` marker |
+| Unit | Relative time formatting, boundaries, multi-day offsets |
+| Unit | Escaping: control characters, `===` injection, multi-line blocks |
+| Unit | Ref ID derivation, stability, forced collision |
+| Unit | Decision lines, ordering, late documentation, multi-decision rows |
+| Unit | Ownership assignment, missingness labels |
+| Unit | Trends: units, nulls, pending, minimum points |
+| Unit | Quota filling, overflow trimming, mandatory refusal |
+| Unit | Note shortening at section boundaries |
+| Fixture integration | Synthetic D1/D2 windows with planted future, pending and truncated rows |
+| Fixture integration | Fake counters with different token densities; identical text |
+| Real data | Measurement script, `real_data` marker, `ARGUS_STORE_DIR` |
 
-Every test states what behaviour it protects, what incorrect implementation would cause it to fail, and what a passing result does not establish, following the existing ARGUS test convention.
-
-Tests using the real MIMIC store require `ARGUS_STORE_DIR`. No real patient text is stored in repository fixtures or test reports.
+Each test states what it protects, what wrong implementation fails it, and what passing does not establish, following the ARGUS test convention. No real patient text in fixtures or reports.
 
 ## Implementation order
 
-1. Define public rendering types, strict configuration and evidence reference mapping.
-2. Implement deterministic formatting for headers and all decision categories.
-3. Add current clinical evidence formatting and explicit missingness handling.
-4. Implement trend extraction, notes and past admission selection.
-5. Implement budgets, omission reporting and multi-tokenizer measurement.
-6. Add unit tests and synthetic integration tests.
-7. Measure real windows, finalise budgets and document observed results.
+1. Config schema and validation; `Section`, ref types; `timefmt.py`, `escape.py`, `references.py`.
+2. **Unbudgeted measurement:** render every record of every domain with minimal formatting and run the measurement on the real sample. This shows actual domain sizes before the selection policy is tuned.
+3. Header and decision formatting.
+4. Ownership, current state, trends.
+5. Recent evidence, notes, past admissions.
+6. Budget enforcement and coverage.
+7. Unit and fixture tests throughout steps 1–6.
+8. Budgeted measurement; finalise budgets and core variables; write `docs/rendering_budget.md`.
 
 ## Rules for the implementing agent
 
-Follow the existing rules in `docs/spec_snapshot_engine.md` and `docs/spec_llm_backbone.md`, including test integrity, reporting of verification results and restrictions on sensitive clinical data.
+Follow the rules in `docs/spec_snapshot_engine.md` and `docs/spec_llm_backbone.md`, including test integrity, honest reporting of verification results and sensitive-data restrictions.
 
 Additionally:
 
-1. Do not modify D1 availability logic or D2 decision classification to simplify rendering.
-2. Do not introduce an LLM call or a clinical inference step into D5.
-3. Do not bypass D4 token counting or duplicate tokenizer implementations.
-4. Do not silently drop decisions, suppress overflow errors or change fixed selection priorities.
-5. Do not report token measurements or runtime performance that have not actually been measured.
-6. Preserve clear separation between clinical data, rendering metadata and later agent instructions.
+1. Do not modify D1 availability logic, D2 decision classification or D4 to simplify rendering.
+2. No LLM calls, no clinical inference.
+3. No tokenizer implementations outside D4.
+4. No silent decision drops, suppressed overflow errors or ad hoc priority changes.
+5. No token or latency figures that were not measured.
+6. No instruction text in rendered output.
 
 ## Files Reference
 
 | File | Change |
 |---|---|
-| `docs/spec_rendering.md` | New: this specification |
-| `config/rendering.toml` | New: rendering format and fixed budgets |
+| `docs/spec_rendering.md` | This specification |
+| `config/rendering.toml` | New: format, tokenizers, budgets, core variables, priorities |
 | `src/argus/rendering/__init__.py` | New: public exports |
-| `src/argus/rendering/renderer.py` | New: main rendering interface |
-| `src/argus/rendering/format.py` | New: clinical record formatting |
-| `src/argus/rendering/trends.py` | New: deterministic trend extraction |
-| `src/argus/rendering/select.py` | New: selection and budget enforcement |
-| `src/argus/rendering/references.py` | New: evidence reference mapping |
-| `scripts/measure_rendering.py` | New: real-window token measurement |
-| `tests/rendering/` | New: unit and integration tests |
-| `docs/rendering_budget.md` | New: measured counts and final budget rationale |
+| `src/argus/rendering/config.py` | New: config loading and validation |
+| `src/argus/rendering/renderer.py` | New: `Renderer`, assembly, token counting |
+| `src/argus/rendering/timefmt.py` | New: relative time formatting |
+| `src/argus/rendering/escape.py` | New: untrusted text escaping |
+| `src/argus/rendering/references.py` | New: ref IDs and map |
+| `src/argus/rendering/format.py` | New: record and decision lines |
+| `src/argus/rendering/trends.py` | New: trend statistics |
+| `src/argus/rendering/select.py` | New: ownership, priority, quotas |
+| `scripts/measure_rendering.py` | New: real-window measurement |
+| `tests/rendering/` | New: unit and fixture tests |
+| `docs/rendering_budget.md` | New: measured aggregates, final budget rationale |
+| `docs/spec_cohort.md` (D6, future) | Must exclude D5 measurement patients from validation draw |
 
-Existing `argus.data` and `argus.llm` public interfaces should remain unchanged.
+`argus.data` and `argus.llm` public interfaces remain unchanged.
 
 ## Out of Scope
 
-- Agent-specific clinical reasoning instructions.
-- Automated diagnosis, guideline interpretation or error detection.
-- LLM-based summarisation or compression.
-- Clinical severity scoring or derived physiological risk scores.
-- Agent memory across sequential windows.
-- Agent tool execution and collaboration message handling.
-- Selection of the validation cohort.
-- Retrospective reviewer interface.
-- Model fine-tuning or embedding-based retrieval.
+- Agent prompt framing and instructions (A1).
+- Request-level preflight and output-token reserve (A1).
+- Diagnosis, guideline interpretation, error detection.
+- LLM summarisation or compression.
+- Severity scores or derived risk scores.
+- Memory across windows (A2).
+- Collaboration messages and citation validation (D8).
+- Cohort selection (D6).
+- Reviewer interface.
+- Embedding-based retrieval.
 
 ## Known Residual Risks
 
-- **Incomplete source documentation.** A missing clinical record can be mistaken by downstream agents for a missing intervention. Explicit missingness labels mitigate but do not eliminate this risk.
-- **Late charting.** A decision may become visible after its clinical time. D5 preserves both timestamps but cannot recover unavailable documentation.
-- **Information loss through budgets.** Optional evidence omitted by selection may matter clinically. Omission reporting and A7 sensitivity experiments address this risk.
-- **Trend simplification.** First, last and extrema may hide important intermediate variation.
-- **Note limitations.** MIMIC-IV-Note does not provide the full set of physician and nursing progress notes.
-- **Prompt injection.** Clinical notes may contain adversarial instructions. Escaping and untrusted-source labelling reduce structural risks but do not guarantee model compliance.
-- **Backend sensitivity.** Equal clinical content does not guarantee equal interpretation across models.
-- **Oversized windows.** Some windows may contain more mandatory decisions than the allowed budget. These must fail explicitly rather than produce incomplete evidence.
+- **Incomplete documentation.** Missing records may be read as missing interventions. Labels mitigate; A1 framing and D7's "cannot determine" label address the rest.
+- **Late charting.** Both times are shown; documentation absent at `at` cannot be recovered.
+- **Budget information loss.** Omitted optional evidence may matter. Coverage reporting and A7 sensitivity arms address this.
+- **Core variable choice.** A fixed list may miss variables relevant to some decisions; they still appear in recent evidence when budget allows.
+- **Trend simplification.** First, last and extrema hide intermediate variation.
+- **Note coverage.** MIMIC-IV-Note lacks progress and nursing notes.
+- **Prompt injection.** Escaping prevents structural injection, not model compliance with embedded text.
+- **Backend sensitivity.** Identical content does not guarantee identical interpretation.
+- **Oversized windows.** Windows whose decisions exceed the total fail explicitly.
 
 ## Related
 
-- `docs/roadmap.md`: D1, D2, D4, D5, D8, A1, A2, A3 and A7.
-- `docs/spec_snapshot_engine.md`: visibility and redaction.
-- `docs/spec_decision_window.md`: decision categories, actions and temporal rules.
-- `docs/spec_llm_backbone.md`: token counting and context enforcement.
-- `docs/backends/gpu_budget.md`: measured local model context limits.
-- `docs/literature_review.md`: information order and quantity sensitivity.
+- `docs/roadmap.md`: D1, D2, D4, D5, D6, D8, A1, A2, A3, A7.
+- `docs/spec_snapshot_engine.md`: visibility, redaction, `is_pending`, `is_truncated`.
+- `docs/spec_decision_window.md`: categories, actions, temporal rules.
+- `docs/spec_llm_backbone.md`: token counting, context enforcement.
+- `docs/backends/gpu_budget.md`: measured context limits.
+- `docs/literature_review.md`: order and quantity sensitivity.
