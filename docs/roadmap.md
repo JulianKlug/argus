@@ -37,8 +37,8 @@ Agents talk to D4's interface only, never to a provider. Swapping a model is a c
 | D1 | Leak-free snapshot engine (L1, L3) | Snapshot criteria green on real store | — | `spec_snapshot_engine.md` | ✅ |
 | D2 | Decision window + catalog | Window criteria green on real store | D1 | `spec_decision_window.md` | ✅ |
 | D3 | MIMIC-IV-Note integration | 35 tables in store; note leak tests green | D1 | `spec_snapshot_engine.md` | ✅ |
-| D4 | Provider-independent LLM interface (L11) | Generate, structured output, tool calls, usage metrics; capabilities declared per backend (context, schema, tools); ≥2 local backends pass same tests; zero-retention backend added once pipeline works on local models, must pass same tests; model + inference settings per agent in config; every backend local or verified zero-retention, verification documented per backend against PhysioNet DUA; logs and case state under same controls; GPU budget | — | `spec_llm_backbone.md` | |
-| D5 | Window rendering to prompt text | Token count per domain measured on real windows per configured tokenizer; budget fixed for trends, notes, past admissions | D2, D4 | `spec_rendering.md` | **next** |
+| D4 | Provider-independent LLM interface (L11) | Generate, structured output, tool calls, usage metrics; capabilities declared per backend (context, schema, tools); ≥2 local backends pass same tests; zero-retention backend added once pipeline works on local models, must pass same tests; model + inference settings per agent in config; every backend local or verified zero-retention, verification documented per backend against PhysioNet DUA; logs and case state under same controls; GPU budget | — | `spec_llm_backbone.md` | ✅ |
+| D5 | Window rendering to prompt text | Token count per domain measured on real windows per configured tokenizer; budget fixed for trends, notes, past admissions | D2, D4 | `spec_rendering.md` | |
 | D6 | Cohort | Inclusion criteria; seeded draw of 50 validation + disjoint development patients; windows per patient | D1 | `spec_cohort.md` | |
 | D7 | Error taxonomy + harm scale (L7, L8) | Commission / omission / delay × domain; general harm scale (NCC MERP covers medications only); actual vs potential harm; labels true error / reasonable alternative / spurious / cannot determine; hindsight rule: judged on evidence available at decision time, later evidence only to confirm harm or a missed signal that was available | — | `spec_taxonomy.md` | |
 | D8 | Multiagent collaboration protocol | Topologies: sequential, parallel, iterative; typed messages (question, evidence, critique, revision) carrying evidence refs + uncertainty; shared case state, patient-data access scoped per role; independent first pass before exchange; every allegation cites source records, agent claims never count as evidence; read-only tools; misleading-instruction note in test set; round cap + termination rule; trace reconstructs every decision; framework-independent contracts | D4 | `spec_collaboration.md` | |
@@ -82,6 +82,7 @@ Agents talk to D4's interface only, never to a provider. Swapping a model is a c
 | Sensitivity estimate | Unflagged sample; injected errors; RealICU labels (if released) | A7, V4 |
 | Reviewer blinding | Blinded first pass; rationale shown | V3 |
 | Guideline corpus | Source, versions by year | A4 |
+| Network egress | Ollama: firewalled instance or none; agent tools: local corpus only, allowlisted endpoints with patient-data check, or both as A7 arms | D4, D8, A4 |
 | Harm scale | AHRQ Common Formats Harm Scale; NCC MERP adapted to non-medication events | D7 |
 
 ## Risks

@@ -6,8 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "duckdb>=1.1",
+    "httpx>=0.28.1",
     "pandas>=2.2",
     "pyarrow>=17",
+    "pydantic>=2.14.3",
+    "tokenizers>=0.23.3",
 ]
 
 [dependency-groups]
@@ -27,4 +30,5 @@ packages = ["src/argus"]
 testpaths = ["tests"]
 markers = [
     "real_data: needs the built MIMIC-IV store at ARGUS_STORE_DIR",
+    "llm: needs a running Ollama with the models pinned in config/llm.toml",
 ]
