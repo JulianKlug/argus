@@ -1,8 +1,7 @@
 # Live contract suite
 
 `uv run pytest -m llm tests/llm/test_contract.py -rA` on 2026-11-16: Ollama 0.34.1, RTX 3090
-(driver 580.95.05), digests as in `config/llm.toml`. Code: `9823d36` plus review fixes (strict tool
-arguments, recorded rejections, determinism warm-up). Synthetic prompts only.
+(driver 580.95.05), digests as in `config/llm.toml`. Code: `f1da700`. Synthetic prompts only.
 
 | Test | qwen27 | mistral24 | medgemma27 |
 |---|---|---|---|

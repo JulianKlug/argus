@@ -239,3 +239,35 @@ def test_existing_world_readable_record_file_refused(write_config, fake, clean_e
     with pytest.raises(PolicyViolationError):
         _client(write_config, fake)
     assert fake.inference_requests() == []
+
+
+
+def test_record_file_symlink_into_repo_refused(write_config, fake, clean_env):
+    """protects=criterion 8 / L8: records never land inside the repo through a symlinked record file;
+    fails_when=a symlink named llm_calls.jsonl to an owner-only 0600 repo file is accepted;
+    no_claim=links created after the client opened its file (writes use the vetted descriptor)."""
+    target = REPO_ROOT / f".record_link_target_{os.getpid()}"
+    target.write_text("")
+    target.chmod(0o600)
+    try:
+        (clean_env / RECORD_FILE).symlink_to(target)
+        with pytest.raises(PolicyViolationError):
+            _client(write_config, fake)
+        assert fake.inference_requests() == []
+        assert target.read_text() == ""
+    finally:
+        target.unlink()
+
+
+def test_record_file_hard_link_refused(write_config, fake, clean_env):
+    """protects=criterion 8 / L8: a hard-linked record file has a second name that may lie in the repo;
+    fails_when=a record file with more than one link is accepted;
+    no_claim=none."""
+    other = clean_env.parent / "other_name.jsonl"
+    other.write_text("")
+    other.chmod(0o600)
+    (clean_env / RECORD_FILE).hardlink_to(other)
+    with pytest.raises(PolicyViolationError):
+        _client(write_config, fake)
+    assert fake.inference_requests() == []
+    assert other.read_text() == ""

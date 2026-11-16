@@ -25,7 +25,7 @@ from argus.llm.config import AgentConfig, load_agent
 from argus.llm.errors import (
     BackendMismatchError, CapabilityError, ContextOverflowError, LlmError, StructuredOutputError, ToolCallError,
 )
-from argus.llm.sink import CallRecord, CallSink, message_to_dict
+from argus.llm.sink import RECORD_FILE, CallRecord, CallSink, message_to_dict
 from argus.llm.types import (
     CallContext, Capabilities, Capability, Completion, FinishReason, Message, Reasoning, Request, Role,
     Settings, ToolSpec, Usage,
@@ -80,8 +80,7 @@ class LlmClient:
         # Static checks: zero requests.
         policy.check_environment(os.environ)
         policy.check_endpoint(backend_config, date.today())
-        sink = CallSink(policy.check_run_dir(os.environ))
-        policy.check_record_file(sink.path)
+        sink = CallSink(policy.open_record_file(policy.check_run_dir(os.environ) / RECORD_FILE))
         connection = connect(backend_config, policy.check_response_status, transport)
         policy.check_transport(connection.trust_env, connection.follow_redirects)
 

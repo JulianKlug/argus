@@ -199,7 +199,8 @@ One JSONL line per attempt (retries included) in `$ARGUS_RUN_DIR/llm_calls.jsonl
 `record_id, run_id, step_id, parent_record_id, labels, agent, backend, model, digest,
 server_version, settings, request (messages, tools, schema), pre_count, raw_response,
 reasoning, message, finish, usage, error, rejection, attempt, started_at`.
-`rejection`: why a returned answer failed validation (tool arguments, schema); null = accepted.
+`rejection`: why a returned answer failed validation (tool arguments, schema). Accepted attempt:
+`error` and `rejection` both null.
 
 Records are sufficient to rebuild every conversation, tool exchange and setting without
 re-running inference. Fresh re-runs (criterion 9) measure variability; they are not replay.
@@ -229,7 +230,7 @@ so arms that swap models are not mistaken for slower models.
 5. Request budgeting: full requests (long synthetic summary, multi-turn history, tool definitions, output schema) whose `count_request_tokens + max_tokens` exceeds `context_tokens` → `ContextOverflowError`, no request sent. Accepted requests: post-call `prompt_tokens` matches the pre-count within the backend's measured tolerance. A forced silent truncation (server `num_ctx` below config) → `ContextOverflowError`.
 6. Tokenizer per backend passes one of the three checks in *Tokenizer*; result documented.
 7. Policy refusals send zero requests (fake transport): non-loopback LOCAL, cloud model, digest mismatch, redirect, proxy env set, ZERO_RETENTION note missing or stale.
-8. Run dir: unset, inside repo, symlink into repo, or group/world-accessible → refused; record files created 0600.
+8. Run dir: unset, inside repo, symlink into repo, or group/world-accessible → refused; record files created 0600; record file that is a symlink or hard link → refused.
 9. Same agent, request, seed, temperature 0: two fresh calls identical per local backend, or variability measured and reported.
 10. Records alone rebuild every conversation (messages, tool calls and results, settings, context ids) byte-identical to what was sent; no inference.
 11. Every call writes one record per attempt with digest, server version, settings, usage; reasoning text apart; unavailable metrics null.

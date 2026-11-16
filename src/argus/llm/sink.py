@@ -6,10 +6,10 @@ the exact wire body sent, settings, the raw response and usage.
 
 import json
 import os
+import weakref
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from argus.llm.policy import RECORD_FILE_MODE
 from argus.llm.types import Message, Role, ToolCall
 
 RECORD_FILE = "llm_calls.jsonl"
@@ -43,18 +43,17 @@ class CallRecord:
 
 
 class CallSink:
-    def __init__(self, run_dir: Path) -> None:
-        self.path = run_dir / RECORD_FILE
+    """Appends to a descriptor vetted by policy (`open_record_file`); never reopens by path."""
 
-        # Create owner-only from the start; an existing file is checked by policy.
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, RECORD_FILE_MODE)
-        os.close(fd)
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+        weakref.finalize(self, os.close, fd)
 
     def write(self, record: CallRecord) -> None:
         # Key order is kept: schema property order reaches the prompt (criterion 10).
-        line = json.dumps(asdict(record), ensure_ascii=False)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        data = (json.dumps(asdict(record), ensure_ascii=False) + "\n").encode()
+        while data:
+            data = data[os.write(self._fd, data):]  # os.write may write fewer bytes than given
 
 
 def read_records(path: Path) -> list[dict]:

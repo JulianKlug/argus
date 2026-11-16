@@ -6,6 +6,7 @@ Order at LlmClient construction:
     server digest, locality           metadata queries only: zero inference requests
 """
 
+import errno
 import ipaddress
 import os
 import stat
@@ -91,11 +92,27 @@ def check_run_dir(env: Mapping[str, str], repo_root: Path = REPO_ROOT) -> Path:
     return run_dir
 
 
-def check_record_file(path: Path) -> None:
-    """An existing record file must still be owner-only."""
-    info = path.stat()
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != RECORD_FILE_MODE:
-        raise PolicyViolationError("call record file must be owned by the user with mode 0600")
+def open_record_file(path: Path) -> int:
+    """Append-only descriptor to an owner-only 0600 regular file with a single name (L8).
+    A symlink or hard link could lead into the repo: refused. Checks run on the opened descriptor,
+    and all writes use it, so the vetted file is the written file."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags, RECORD_FILE_MODE)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise PolicyViolationError("call record file must not be a symlink") from None
+        raise
+
+    info = os.fstat(fd)
+    vetted = (
+        stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+        and info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == RECORD_FILE_MODE
+    )
+    if not vetted:
+        os.close(fd)
+        raise PolicyViolationError("call record file must be a single-link regular file, user-owned, mode 0600")
+    return fd
 
 
 def _is_loopback(url: str) -> bool:
