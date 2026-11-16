@@ -39,6 +39,12 @@ mode. The adapter therefore pre-counts through the native render (`truncate: fal
 evaluation then differs from the pre-count and raises `ContextOverflowError` (contract test
 `test_forced_truncation_detected[mistral24]`). `context_tokens` must not exceed the server default.
 
+## Usage
+
+`/v1` reports no timings: `gpu_s`, `load_s` and `cost` are null (unavailable, not zero).
+Token counts are recorded. Cross-backend cost comparisons (A1, A7) use estimates from token counts and
+measured rates (`gpu_budget.md`), labelled as estimates.
+
 ## Tokenizer (criterion 6)
 
 Candidate 2: GGUF vocabulary (`gpt2`, pre `llama-bpe`), BOS added; prompt rendered natively by the server.

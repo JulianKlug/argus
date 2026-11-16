@@ -264,9 +264,14 @@ def test_pre_count_matches_server_count(tmp_path, backend, clean_env):
 # ---------- criterion 9 ----------
 
 def test_two_fresh_calls_identical(tmp_path, backend):
-    """protects=criterion 9: same agent, request, seed, temperature 0 -> identical answers;
+    """protects=criterion 9: same agent, request, seed, temperature 0, warm prompt cache -> identical answers;
     fails_when=answers differ (then variability must be measured and reported: scripts/measure_backends.py);
-    no_claim=bitwise GPU determinism across loads or batch sizes."""
+    no_claim=cold-cache equals warm-cache (differs on medgemma27, docs/backends/medgemma27.md), bitwise GPU
+    determinism across loads or batch sizes."""
     request = _ask("List three causes of lactic acidosis, comma-separated.")
+
+    # Warm-up: the first call without a cached prefix may differ (prefill numerics depend on KV-cache state).
+    _client(tmp_path, backend).generate(request, CTX)
+
     answers = [_client(tmp_path, backend).generate(request, CTX).message.content for _ in range(2)]
     assert answers[0] == answers[1]

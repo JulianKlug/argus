@@ -60,7 +60,7 @@ Ollama facts measured 2026-11-16 (they drive L3):
 | L2 | Sync API. One GPU: Ollama serializes calls; parallel topologies (D8) queue |
 | L3 | Budget before the call, verify after: request rejected unless `count_request_tokens + max_tokens ≤ context_tokens`; after the call `prompt_tokens` must equal the pre-count (± measured template tolerance), else `ContextOverflowError` (catches silent truncation). No exact or conservative count for a backend → backend refused (fail closed) |
 | L4 | Structured output: backend-native schema constraint, then pydantic validation. Invalid → one retry with the invalid answer and the validation errors appended as corrective feedback; `finish = LENGTH` → no retry. Then `StructuredOutputError`. Every attempt recorded |
-| L5 | D4 returns tool calls, never executes them. Returned calls validated against the offered tools (name, argument schema); invalid → same retry rule as L4, then `ToolCallError`. Nothing invalid reaches the harness |
+| L5 | D4 returns tool calls, never executes them. Returned calls validated against the offered tools (name, argument schema, strict: no type coercion, arguments returned as sent); invalid → same retry rule as L4, then `ToolCallError`. Nothing invalid reaches the harness |
 | L6 | Capabilities are probed from the backend (`/api/show`, live probe) and intersected with config; config can restrict, never grant |
 | L7 | Defaults: `temperature = 0`, fixed `seed`. Records hold digest, server version, settings |
 | L8 | Call records hold patient text: only under `ARGUS_RUN_DIR`, outside the repo, owner-only |
@@ -198,7 +198,8 @@ store at project end; never copied into the repo or issue trackers.
 One JSONL line per attempt (retries included) in `$ARGUS_RUN_DIR/llm_calls.jsonl`:
 `record_id, run_id, step_id, parent_record_id, labels, agent, backend, model, digest,
 server_version, settings, request (messages, tools, schema), pre_count, raw_response,
-reasoning, message, finish, usage, error, attempt, started_at`.
+reasoning, message, finish, usage, error, rejection, attempt, started_at`.
+`rejection`: why a returned answer failed validation (tool arguments, schema); null = accepted.
 
 Records are sufficient to rebuild every conversation, tool exchange and setting without
 re-running inference. Fresh re-runs (criterion 9) measure variability; they are not replay.
@@ -282,6 +283,8 @@ Same as `spec_snapshot_engine.md` (rules 1–5). Additionally:
 ## Out of Scope
 
 - Remote zero-retention backend (after the local pipeline works; config + verification note only).
+  Open before any remote use: `openai_compat` needs a pre-count path without the Ollama control API;
+  HTTPS required; verification fields must assert the protections, not only be present.
 - Tool execution, multi-agent messaging, orchestration (D8, A1).
 - Rendering windows to text (D5).
 - Fine-tuning; time-series encoders (TimeOmni-1, OpenTSLM).

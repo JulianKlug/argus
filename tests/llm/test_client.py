@@ -317,7 +317,11 @@ def test_tool_round_trip_links_results_to_calls(write_config, fake):
     assert [m["tool_name"] for m in wire[2:]] == ["get_lab", "get_window"]
 
 
-@pytest.mark.parametrize("bad", [("drop_table", {"name": "x"}), ("get_lab", {"name": "lactate", "hours": "six"})])
+@pytest.mark.parametrize("bad", [
+    ("drop_table", {"name": "x"}),
+    ("get_lab", {"name": "lactate", "hours": "six"}),
+    ("get_lab", {"name": "lactate", "hours": "6"}),  # coercible, but not the declared type
+])
 def test_invalid_tool_call_retried_then_valid(write_config, fake, bad):
     """protects=criterion 3: unknown tool / schema-failing arguments -> retry with per-call feedback;
     fails_when=an invalid call is returned to the caller, or the retry lacks feedback linked to the call;
@@ -341,6 +345,27 @@ def test_invalid_tool_calls_twice_raise_tool_call_error(write_config, fake, clea
     with pytest.raises(ToolCallError):
         client.generate(_request("check", tools=(LAB_TOOL,)), CTX)
     assert len(_records(clean_env)) == 2
+
+
+def test_records_state_rejection_per_attempt(write_config, fake, clean_env):
+    """protects=criteria 4, 11 audit trail: a rejected answer is recorded as rejected, the accepted one not;
+    fails_when=a rejected attempt's record is indistinguishable from an accepted one;
+    no_claim=none."""
+    client = _client(write_config, fake)
+    fake.replies += [
+        Reply(tool_calls=[("get_lab", {"name": "lactate", "hours": "6"})]),
+        Reply(tool_calls=[("get_lab", {"name": "lactate", "hours": 6})]),
+        Reply(content="not json"),
+        Reply(content='{"risk": "high"}'),
+    ]
+    client.generate(_request("check", tools=(LAB_TOOL,)), CTX)
+    with pytest.raises(StructuredOutputError):
+        client.structured(_request("assess"), Finding, CTX)
+
+    rejections = [r["rejection"] for r in _records(clean_env)]
+    assert rejections[1] is None
+    assert all(rejections[i] for i in (0, 2, 3))
+    assert "hours" in rejections[0]
 
 
 def test_dropped_tool_call_turn_is_invalid(write_config, fake):

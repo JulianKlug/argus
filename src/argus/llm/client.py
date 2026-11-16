@@ -2,7 +2,7 @@
 
     for_agent ─► config ─► policy (static) ─► connect ─► policy (server) ─► capabilities
     generate / structured
-        └─ attempt: pre_count ─► budget check ─► send ─► post-check ─► CallRecord
+        └─ attempt: pre_count ─► budget check ─► send ─► post-check ─► validate ─► CallRecord
              └─ invalid tool calls / schema-invalid answer ─► one corrective retry (L4, L5)
 """
 
@@ -11,10 +11,11 @@ import logging
 import os
 import time
 import uuid
-from dataclasses import asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -43,6 +44,7 @@ STRUCTURED_FEEDBACK = (
 TOOL_FEEDBACK_INVALID = "Tool call rejected, not executed: {errors}. Correct it and call again."
 TOOL_FEEDBACK_SIBLING = "Not executed: another call in this turn was invalid. Repeat all calls of this turn."
 TOOL_FEEDBACK_UNPARSED = "Your previous turn produced neither an answer nor a parsable tool call. Answer or call a tool."
+REJECTION_UNPARSED = "empty turn: no answer, no parsed tool call"
 
 # Live capability probes (L6): synthetic prompts through the normal adapter path, no patient data.
 PROBE_MAX_TOKENS = 256
@@ -98,23 +100,31 @@ class LlmClient:
         specs = {t.name: t for t in request.tools}
         tools = tuple(_wire_tool(t) for t in request.tools)
         messages = request.messages
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            result, completion = self._attempt(messages, tools, None, ctx, attempt)
+
+        def judge(result: BackendResult) -> _Verdict:
             errors = _tool_call_errors(result, specs)
+            if errors:
+                summary = "\n".join(f"call {i}: {e}" for i, e in errors.items())
+                return _Verdict(summary, _tool_feedback(result.message, errors))
 
             # Finished normally with nothing parsed: the server dropped a malformed tool call.
             unparsed = (
                 bool(specs) and result.finish is FinishReason.STOP
                 and not result.message.tool_calls and not result.message.content.strip()
             )
-            if not errors and not unparsed:
+            if unparsed:
+                return _Verdict(REJECTION_UNPARSED, (Message(Role.USER, TOOL_FEEDBACK_UNPARSED),))
+            return _Verdict()
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            result, completion, verdict = self._attempt(messages, tools, None, ctx, attempt, judge)
+            if verdict.rejection is None:
                 return completion
 
             log.warning("llm record %s: invalid tool turn", completion.record_id)
             if result.finish is FinishReason.LENGTH or attempt == MAX_ATTEMPTS:
                 raise ToolCallError("no valid tool calls after retry", completion.record_id)
-            feedback = (Message(Role.USER, TOOL_FEEDBACK_UNPARSED),) if unparsed else _tool_feedback(result.message, errors)
-            messages = messages + (result.message,) + feedback
+            messages = messages + (result.message,) + verdict.feedback
 
         raise AssertionError("unreachable")
 
@@ -127,16 +137,23 @@ class LlmClient:
 
         wire_schema = inline_schema(schema)
         messages = request.messages
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            result, completion = self._attempt(messages, (), wire_schema, ctx, attempt)
+
+        def judge(result: BackendResult) -> _Verdict:
             try:
-                return schema.model_validate_json(result.message.content), completion
+                return _Verdict(value=schema.model_validate_json(result.message.content))
             except ValidationError as e:
-                log.warning("llm record %s: schema-invalid answer", completion.record_id)
-                if result.finish is FinishReason.LENGTH or attempt == MAX_ATTEMPTS:
-                    raise StructuredOutputError("no schema-valid answer", completion.record_id) from None
-                feedback = STRUCTURED_FEEDBACK.format(errors=_validation_summary(e))
-                messages = messages + (result.message, Message(Role.USER, feedback))
+                summary = _validation_summary(e)
+                return _Verdict(summary, (Message(Role.USER, STRUCTURED_FEEDBACK.format(errors=summary)),))
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            result, completion, verdict = self._attempt(messages, (), wire_schema, ctx, attempt, judge)
+            if verdict.rejection is None:
+                return verdict.value, completion
+
+            log.warning("llm record %s: schema-invalid answer", completion.record_id)
+            if result.finish is FinishReason.LENGTH or attempt == MAX_ATTEMPTS:
+                raise StructuredOutputError("no schema-valid answer", completion.record_id)
+            messages = messages + (result.message,) + verdict.feedback
 
         raise AssertionError("unreachable")
 
@@ -160,8 +177,10 @@ class LlmClient:
             context_tokens=self.capabilities.context_tokens,
         )
 
-    def _attempt(self, messages, tools, schema, ctx: CallContext, attempt: int) -> tuple[BackendResult, Completion]:
-        """One budgeted, recorded call (L3, L11)."""
+    def _attempt(
+        self, messages, tools, schema, ctx: CallContext, attempt: int, judge: Callable[[BackendResult], "_Verdict"],
+    ) -> tuple[BackendResult, Completion, "_Verdict"]:
+        """One budgeted, validated, recorded call (L3, L11). The record states the validation outcome."""
         call = self._call(messages, tools, schema)
         record = _RecordDraft(self._agent, self._server, call, ctx, attempt)
         backend = self._agent.backend
@@ -180,17 +199,19 @@ class LlmClient:
             # Silent truncation: the server evaluated a different prompt than the one budgeted.
             if abs(result.prompt_tokens - record.pre_count) > backend.count_tolerance:
                 raise ContextOverflowError(f"backend {backend.name}: evaluated prompt length differs from pre-count")
+
+            verdict = judge(result)
         except Exception as e:
-            self._sink.write(record.finish(type(e).__name__, None))
+            self._sink.write(record.finish(type(e).__name__, None, None))
             log.error("llm record %s failed: %s", record.record_id, type(e).__name__)
             if isinstance(e, LlmError):
                 raise type(e)(str(e), record.record_id) from None
             raise
 
         usage = self._usage(result, latency)
-        self._sink.write(record.finish(None, usage))
+        self._sink.write(record.finish(None, usage, verdict.rejection))
         log.info("llm record %s: %s, %d+%d tokens", record.record_id, result.finish.value, usage.prompt_tokens, usage.completion_tokens)
-        return result, Completion(result.message, result.reasoning, result.finish, usage, record.record_id)
+        return result, Completion(result.message, result.reasoning, result.finish, usage, record.record_id), verdict
 
     def _usage(self, result: BackendResult, latency_s: float) -> Usage:
         backend = self._agent.backend
@@ -208,6 +229,15 @@ class LlmClient:
         )
 
 
+@dataclass(frozen=True)
+class _Verdict:
+    """Validation outcome of one answer, recorded with its attempt."""
+
+    rejection: str | None = None        # why the answer was refused (no input values); None = accepted
+    feedback: tuple[Message, ...] = ()  # corrective messages for the retry, after the rejected answer
+    value: Any = None                   # parsed answer (structured)
+
+
 class _RecordDraft:
     """Collects one attempt's fields; `finish` freezes them into a CallRecord."""
 
@@ -223,7 +253,7 @@ class _RecordDraft:
         self._ctx = ctx
         self._attempt = attempt
 
-    def finish(self, error: str | None, usage: Usage | None) -> CallRecord:
+    def finish(self, error: str | None, usage: Usage | None, rejection: str | None) -> CallRecord:
         agent, server, call, result = self._agent, self._server, self._call, self.result
         settings = asdict(call.settings) | {
             "reasoning": call.settings.reasoning.value,
@@ -256,6 +286,7 @@ class _RecordDraft:
             finish=None if result is None else result.finish.value,
             usage=None if usage is None else asdict(usage),
             error=error,
+            rejection=rejection,
             attempt=self._attempt,
             started_at=self.started_at,
         )
@@ -362,8 +393,9 @@ def _tool_call_errors(result: BackendResult, specs: dict[str, ToolSpec]) -> dict
         elif call.name not in specs:
             errors[call.id] = f"unknown tool {call.name!r}; offered: {sorted(specs)}"
         else:
+            # Strict JSON mode: "6" for an int is refused, since the caller gets the arguments unchanged.
             try:
-                specs[call.name].parameters.model_validate(call.arguments)
+                specs[call.name].parameters.model_validate_json(json.dumps(call.arguments), strict=True)
             except ValidationError as e:
                 errors[call.id] = _validation_summary(e)
     return errors

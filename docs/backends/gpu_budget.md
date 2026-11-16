@@ -51,6 +51,12 @@ agents (conservative). One swap at window start if the window ends on a differen
 
 Cells: GPU seconds per window · GPU hours per 1,000 windows.
 
+## Measured vs estimated cost
+
+Native-API backends record measured `gpu_s` per call (`prompt_eval_duration + eval_duration`). `/v1`
+backends (mistral24) record null. Per-window comparison across arms uses the estimate above for every
+backend, so arms are compared on one method; measured `gpu_s` validates the estimate where available.
+
 ## GPU hours per study arm
 
 GPU hours = windows (D6) × seconds per window / 3600. D6 has not fixed the window count yet, so the

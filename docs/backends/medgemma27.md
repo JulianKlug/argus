@@ -46,4 +46,4 @@ Cause (reproduced, 5 calls after unloading): the first call after a model load (
 among themselves). Prefill numerics depend on KV-cache state. Example: "certain medications/toxins"
 cold vs "certain medications (e.g., metformin, salicylates)" warm. Stock `medgemma:27b` agreed on this
 prompt, but the mechanism is the same for every Ollama model: fresh re-runs measure variability; replay
-uses records (criterion 10).
+uses records (criterion 10). The contract test compares warm-cache calls only (one warm-up call first).

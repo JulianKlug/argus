@@ -37,6 +37,7 @@ class CallRecord:
     finish: str | None
     usage: dict | None
     error: str | None       # error class name only, never content
+    rejection: str | None   # validation failure of the answer (no input values); None = accepted
     attempt: int
     started_at: str
 
