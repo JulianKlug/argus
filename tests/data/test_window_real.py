@@ -14,7 +14,7 @@ import pytest
 
 from argus.data import AmbiguousEncounterError, DecisionCategory, DecisionWindow, NotInIcuStayError
 from argus.data.catalog import POE_KEY_SEPARATOR, DecisionCatalog, Source
-from argus.data.domains import EVENT_TIME, ORDER_ROW, SOURCE_ROW, SOURCE_TABLE
+from argus.data.domains import AVAILABLE_TIME, EVENT_TIME, ORDER_ROW, SOURCE_ROW, SOURCE_TABLE
 from test_engine_real import (
     LATENCY_P95_SECONDS, MAX_REJECTED_SHARE, SAMPLE_SIZE, SEED, WARMUP_CALLS, _all_rows, _instant, _stays,
     engine, pytestmark, store_dir,  # noqa: F401 (fixtures and markers reused)
@@ -86,7 +86,7 @@ def window_sample(engine, store_dir) -> _WindowSample:  # noqa: F811
 
 
 def test_decisions_are_visible_rows_inside_window(window_sample):
-    """protects=spec criterion 10: every decision row is a snapshot row and start < event_time <= at;
+    """protects=spec criterion 10: every decision row is a snapshot row and start < known time <= at;
     fails_when=a rule derives a decision from a hidden row or a time outside the window on real data;
     no_claim=completeness of decisions (catalog review) or link precision."""
     assert window_sample.rejected <= MAX_REJECTED_SHARE * SAMPLE_SIZE
@@ -102,7 +102,8 @@ def test_decisions_are_visible_rows_inside_window(window_sample):
             counts[category] += len(frame)
             keys = set(zip(frame[SOURCE_TABLE], frame[SOURCE_ROW]))
             assert keys <= visible, (window.snapshot.subject_id, window.snapshot.at, category)
-            inside = (frame[EVENT_TIME] > start) & (frame[EVENT_TIME] <= at)
+            known = frame[[EVENT_TIME, AVAILABLE_TIME]].max(axis=1)
+            inside = (known > start) & (known <= at)
             assert inside.all(), (window.snapshot.subject_id, window.snapshot.at, category)
 
     print(f"\ndecisions over {SAMPLE_SIZE} windows: " + ", ".join(f"{c.name}={n}" for c, n in counts.items()))

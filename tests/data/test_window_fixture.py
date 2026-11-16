@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from argus.data import DecisionAction, DecisionCategory, Domain, SnapshotEngine
-from argus.data.domains import ACTION, EVENT_TIME, SOURCE_ROW, SOURCE_TABLE
+from argus.data.domains import ACTION, AVAILABLE_TIME, EVENT_TIME, SOURCE_ROW, SOURCE_TABLE
 from conftest import AT, HOUR, MINUTE, SUBJECT, WINDOW, WINDOW_START, Kind
 
 A = DecisionAction
@@ -61,7 +61,7 @@ def test_window_lists_expected_decisions(engine):
 
 
 def test_decisions_are_visible_rows_inside_window(engine, fixture_store):
-    """protects=spec criterion 1 + 7: decisions only from rows the snapshot shows, start < event_time <= at,
+    """protects=spec criterion 1 + 7: decisions only from rows the snapshot shows, start < known time <= at,
     never emar or sentinel rows;
     fails_when=decision derived from a row hidden at `at`, outside the window, or from eMAR;
     no_claim=clinical correctness of the categories."""
@@ -75,7 +75,8 @@ def test_decisions_are_visible_rows_inside_window(engine, fixture_store):
         assert keys <= visible, category
         assert not keys & sentinels, category
         assert "emar" not in set(frame[SOURCE_TABLE]), category
-        assert ((frame[EVENT_TIME] > WINDOW_START) & (frame[EVENT_TIME] <= AT)).all(), category
+        known = frame[[EVENT_TIME, AVAILABLE_TIME]].max(axis=1)
+        assert ((known > WINDOW_START) & (known <= AT)).all(), category
 
 
 def test_window_snapshot_equals_get_snapshot(engine):

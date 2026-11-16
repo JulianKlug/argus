@@ -105,6 +105,12 @@ def _decisions(catalog: DecisionCatalog, **tables: list[dict]) -> dict[DecisionC
     return decisions({t: timeline.visible(t) for t in SOURCE_TABLES}, catalog, START)
 
 
+def _window(catalog: DecisionCatalog, at: pd.Timestamp, **tables: list[dict]) -> dict[DecisionCategory, pd.DataFrame]:
+    """Decisions in (at - WINDOW, at]."""
+    timeline = _timeline(at, **tables)
+    return decisions({t: timeline.visible(t) for t in SOURCE_TABLES}, catalog, at - WINDOW)
+
+
 def _actions(frame: pd.DataFrame, table: Table) -> list[tuple[int, DecisionAction, pd.Timestamp]]:
     """(source_row, action, decision time) of `table`'s decisions, ordered by row then time."""
     rows = frame[frame[SOURCE_TABLE] == table.source_name]
@@ -276,7 +282,7 @@ def test_infusion_link_distinguishes_strength(catalog):
 
 def test_prescription_decided_at_order_time(catalog):
     """protects=spec criterion 5 decision time = poe ordertime, else starttime; diluents skipped;
-    fails_when=scheduled start inside window counted although ordered before it, BASE row emitted,
+    fails_when=order placed before window but first visible in it dropped or retimed, BASE row emitted,
     or window bounds not (start, at];
     no_claim=verbal-order timing."""
     poe = [
@@ -284,7 +290,7 @@ def test_prescription_decided_at_order_time(catalog):
         _poe("p-2", "Medications", None, "New", START + HOUR),
     ]
     prescriptions = [
-        _rx("Vancomycin", START + 2 * HOUR, poe_id="p-1"),  # 0 ordered before window
+        _rx("Vancomycin", START + 2 * HOUR, poe_id="p-1"),  # 0 ordered before window, first visible in it
         _rx("Vancomycin", START + 2 * HOUR, poe_id="p-2"),  # 1 ORDER at START + 1h
         _rx("Vancomycin", START + 3 * HOUR),  # 2 no poe: ORDER at starttime
         _rx("NORepinephrine", START + 3 * HOUR, drug_type="BASE"),  # 3 diluent
@@ -295,9 +301,34 @@ def test_prescription_decided_at_order_time(catalog):
     result = _decisions(catalog, POE=poe, PRESCRIPTIONS=prescriptions)[DecisionCategory.MEDICATION]
 
     assert _actions(result, Table.PRESCRIPTIONS) == [
+        (0, DecisionAction.ORDER, START - HOUR),
         (1, DecisionAction.ORDER, START + HOUR),
         (2, DecisionAction.ORDER, START + 3 * HOUR),
         (5, DecisionAction.ORDER, AT),
+    ]
+
+
+def test_consecutive_windows_list_each_decision_once(catalog):
+    """protects=spec criterion 5 + 15 a decision belongs to the window where it first becomes visible,
+    keeping its decision time;
+    fails_when=order placed before its scheduled start or late-charted setting lost between windows,
+    or listed twice;
+    no_claim=decisions never documented."""
+    poe = [_poe("p-1", "Medications", None, "New", START - HOUR)]
+    prescriptions = [_rx("Vancomycin", START + 2 * HOUR, poe_id="p-1")]  # 0 ordered 05:00, starts 08:00
+    chart = [dict(_chart(PEEP, "5", START - HOUR), storetime=START + HOUR)]  # 0 set 05:00, charted 07:00
+    tables = dict(POE=poe, PRESCRIPTIONS=prescriptions, CHARTEVENTS=chart)
+
+    previous = _window(catalog, START, **tables)
+    current = _window(catalog, AT, **tables)
+
+    assert previous[DecisionCategory.MEDICATION].empty
+    assert previous[DecisionCategory.DEVICE_SETTING].empty
+    assert _actions(current[DecisionCategory.MEDICATION], Table.PRESCRIPTIONS) == [
+        (0, DecisionAction.ORDER, START - HOUR)
+    ]
+    assert _actions(current[DecisionCategory.DEVICE_SETTING], Table.CHARTEVENTS) == [
+        (0, DecisionAction.START, START - HOUR)
     ]
 
 

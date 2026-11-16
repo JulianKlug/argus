@@ -1,9 +1,13 @@
-"""Clinician decisions in a window (start, at], derived from rows visible at `at`.
+"""Clinician decisions that became visible in a window (start, at], derived from rows visible at `at`.
 
 Window logic only: rows arrive already filtered by availability.py, so nothing here
 can leak. Each rule turns one source table into decision rows (action + decision time):
 
-    visible rows ──► rule (category, action, event_time = decision time) ──► keep start < event_time
+    visible rows ──► rule (category, action, event_time = decision time) ──► keep start < known time
+
+Known time = max(event_time, available_time): when the decision first shows up in the record.
+Consecutive windows then list each decision exactly once, e.g. an order placed at 05:00 for an
+08:00 start is invisible in (00:00, 06:00] and listed in (06:00, 12:00] with event_time 05:00.
 
 Internal helper columns start with "_" and never reach callers.
 """
@@ -15,7 +19,7 @@ import pandas as pd
 from argus.data.catalog import CATEGORY, DRUG, POE_KEY_SEPARATOR, DecisionCatalog, Source
 from argus.data.domains import (
     ACTION, COMMON_COLUMNS, DECISION_COLUMNS, EVENT_TIME, HADM_ID, LABEL, ORDER_ROW, ORDER_TABLE,
-    SOURCE_ROW, SOURCE_TABLE, STAY_ID, SUBCATEGORY, DecisionAction, DecisionCategory, Table,
+    SOURCE_ROW, SOURCE_TABLE, STAY_ID, AVAILABLE_TIME, SUBCATEGORY, DecisionAction, DecisionCategory, Table,
 )
 
 # Tables whose visible rows the rules read.
@@ -69,7 +73,7 @@ _LABEL_SEPARATOR = ", "
 def decisions(
     frames: Mapping[Table, pd.DataFrame], catalog: DecisionCatalog, start: pd.Timestamp
 ) -> dict[DecisionCategory, pd.DataFrame]:
-    """Decision frames per category for rows with start < event_time."""
+    """Decision frames per category for rows first visible in the window (start < known time)."""
     prescriptions, poe = frames[Table.PRESCRIPTIONS], frames[Table.POE]
     candidates = {
         Table.CHARTEVENTS: _charted(frames[Table.CHARTEVENTS], catalog, start),
@@ -85,7 +89,7 @@ def decisions(
     result = {}
     for category, tables in _CATEGORY_TABLES.items():
         rows = pd.concat([candidates[t][candidates[t][_CATEGORY] == category] for t in tables], ignore_index=True)
-        result[category] = _finish(rows[rows[EVENT_TIME] > start])
+        result[category] = _finish(rows[_known_after(rows, start)])
     return result
 
 
@@ -104,7 +108,7 @@ def _charted(chart: pd.DataFrame, catalog: DecisionCatalog, start: pd.Timestamp)
     rows = chart.assign(**{SUBCATEGORY: classes[SUBCATEGORY], _CATEGORY: classes[CATEGORY]})
     rows = rows[rows[_CATEGORY].notna()]
     rows = rows.sort_values([STAY_ID, "itemid", EVENT_TIME, SOURCE_ROW])
-    rows[_IN_WINDOW] = rows[EVENT_TIME] > start
+    rows[_IN_WINDOW] = _known_after(rows, start)
 
     group = rows.groupby([STAY_ID, "itemid"], dropna=False, sort=False)
     previous = group["value"].shift()
@@ -276,6 +280,7 @@ def _specimens(tests: pd.DataFrame, specimen: str, kept: tuple[str, ...]) -> pd.
 
     first = rows.drop_duplicates(specimen)[list(COMMON_COLUMNS) + list(kept)].copy()
     first[LABEL] = first[specimen].map(labels)
+    first[AVAILABLE_TIME] = first[EVENT_TIME]  # order visible at draw (pending row); later result is not the decision
     first[_CATEGORY] = DecisionCategory.TEST_ORDER
     first[ACTION] = DecisionAction.ORDER
     return first
@@ -293,6 +298,11 @@ def _differs(values: pd.Series, previous: pd.Series) -> pd.Series:
     """Null-safe `!=`: missing vs value differs, missing vs missing does not."""
     both_missing = values.isna() & previous.isna()
     return (values != previous).fillna(True).astype(bool) & ~both_missing
+
+
+def _known_after(rows: pd.DataFrame, start: pd.Timestamp) -> pd.Series:
+    """start < max(event_time, available_time): decision first visible after `start`."""
+    return rows[[EVENT_TIME, AVAILABLE_TIME]].max(axis=1) > start
 
 
 def _finish(rows: pd.DataFrame) -> pd.DataFrame:

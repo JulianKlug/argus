@@ -62,7 +62,11 @@ source row's own columns. One row per decision. `window <= 0` → `ValueError`.
 
 ### Rules
 
-In window iff `start < event_time <= at`.
+In window iff `start < known <= at`, `known = max(event_time, available_time)`: the decision
+belongs to the window where it first becomes visible and keeps its decision time. Consecutive
+windows list each decision exactly once. e.g. order 05:00, scheduled start 08:00 (visible 08:00):
+absent from (00:00, 06:00], listed in (06:00, 12:00] with `event_time` 05:00. Specimens: order
+visible at draw, so `known = event_time`.
 
 | Category | Source | Decision |
 |---|---|---|
@@ -123,11 +127,11 @@ for the infusion link.
 
 ## Acceptance Criteria
 
-1. Every decision row has `start < event_time <= at` and its `(source_table, source_row)` in the snapshot.
+1. Every decision row has `start < known <= at` and its `(source_table, source_row)` in the snapshot.
 2. Vent setting unchanged from before window → one CONTINUE; changed in window → CHANGE; first ever → START.
 3. Infusion: first segment START, rate change CHANGE, same-rate bag change none, diluent none, restart after gap START, Stopped STOP at endtime.
 4. Drip segment links to its active prescription; PRN bolus + drip both active → drip chosen by route.
-5. Prescription ordered before window, started in window → not a decision.
+5. Prescription ordered before window, first visible in window (scheduled start) → ORDER at ordertime.
 6. Lab and micro decisions carry no result columns, one row per specimen; pending results invisible.
 7. emar rows never decisions.
 8. Event at exactly `at − window` excluded; at `at` included.
@@ -137,10 +141,11 @@ for the infusion link.
 12. Charted non-setting decisions (PCA rate, restraints) follow criterion 2 under their catalog category.
 13. poe Lab → TEST_ORDER, Consults → CONSULT, ADT → PATIENT_MOVEMENT, at order time.
 14. Planned / complication line removal → EQUIPMENT_REMOVAL STOP; unplanned removal → none; Foley interval end → EQUIPMENT_REMOVAL STOP.
+15. Consecutive windows: a decision visible only after its decision time (late charting, scheduled start) is listed once, in the window where it becomes visible.
 
 ## Residual Risks
 
-- Decisions documented after `at` are invisible → read as omissions (late charting).
+- Decisions documented after `at` are invisible in that window → read as omissions (late charting); they appear in the next window with their decision time.
 - 4–14% of infusion segments unlinked (heuristic link, no key).
 - Lab order time unknown; draw time used. Ordered-not-yet-drawn labs invisible.
 - Setting CONTINUE compares with the last value in the same stay, even after a long gap.
