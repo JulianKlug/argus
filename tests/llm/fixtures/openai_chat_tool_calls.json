@@ -1,0 +1,46 @@
+{
+ "id": "chatcmpl-556",
+ "object": "chat.completion",
+ "created": 1794841592,
+ "model": "qwen3.8:27b",
+ "system_fingerprint": "fp_ollama",
+ "choices": [
+  {
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": "",
+    "reasoning": "The user wants me to call get_lab twice in a single turn: once with name=lactate and once with name=creatinine. I should make both calls in the same block since they're independent.",
+    "tool_calls": [
+     {
+      "id": "call_er32ih1j",
+      "index": 0,
+      "type": "function",
+      "function": {
+       "name": "get_lab",
+       "arguments": "{\"name\":\"lactate\"}"
+      }
+     },
+     {
+      "id": "call_ov8gtn42",
+      "index": 1,
+      "type": "function",
+      "function": {
+       "name": "get_lab",
+       "arguments": "{\"name\":\"creatinine\"}"
+      }
+     }
+    ]
+   },
+   "finish_reason": "tool_calls"
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 308,
+  "prompt_tokens_details": {
+   "cached_tokens": 0
+  },
+  "completion_tokens": 100,
+  "total_tokens": 408
+ }
+}

@@ -1,0 +1,53 @@
+# LLM backends and per-agent settings (docs/spec_llm_backbone.md). No secrets here.
+# context_tokens: measured maximum fully on GPU (docs/backends/gpu_budget.md), not the nominal one.
+# count_tolerance: measured |prompt_eval_count - pre_count| (docs/backends/<name>.md).
+
+[backends.qwen27]
+adapter = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "qwen3.8:27b"
+digest = "22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643"
+policy = "LOCAL"
+context_tokens = 65536
+count_tolerance = 0
+gpu_cost_per_s = 1.0
+currency = "GPU_S"
+
+[backends.mistral24]
+adapter = "openai_compat"
+base_url = "http://127.0.0.1:11434/v1"
+control_url = "http://127.0.0.1:11434"
+model = "mistral-small3.2-argus:24b"   # config/modelfiles/: fixes dropped tool calls
+digest = "810b24690f536970d4ad962dafda4db0a2d8b48b3a877639d537a3348b3558a3"
+policy = "LOCAL"
+context_tokens = 32768        # /v1 server default; 49152 fits on GPU via native API
+count_tolerance = 0
+gpu_cost_per_s = 1.0
+currency = "GPU_S"
+
+[backends.medgemma27]
+adapter = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "medgemma-argus:27b"           # config/modelfiles/: fixes system prompt rendering
+digest = "852e6fdb039823b0cf87695ee4546f749897d7b14d22cc4fd46cc335b1c3295c"
+policy = "LOCAL"
+context_tokens = 65536
+count_tolerance = 0
+gpu_cost_per_s = 1.0
+currency = "GPU_S"
+
+[agents.expert]
+backend = "qwen27"
+requires = ["TOOLS", "JSON_SCHEMA", "REASONING"]
+temperature = 0.0
+seed = 7
+max_tokens = 4096        # includes reasoning tokens
+reasoning = "ON"
+
+[agents.summary]
+backend = "medgemma27"
+requires = ["JSON_SCHEMA"]
+temperature = 0.0
+seed = 7
+max_tokens = 2048
+reasoning = "OFF"

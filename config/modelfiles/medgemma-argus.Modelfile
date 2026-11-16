@@ -1,0 +1,18 @@
+# Derived from medgemma:27b (same weights). docs/backends/medgemma27.md
+# Why: the stock template trims the newline after `<start_of_turn>user` and joins system and
+# user text with one newline, rendering `<start_of_turn>usersystem…`. Gemma 3's reference
+# template is `<start_of_turn>user\n{system}\n\n{user}<end_of_turn>\n`.
+FROM medgemma:27b
+TEMPLATE """{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 }}
+{{- if eq .Role "user" }}<start_of_turn>user
+{{ if and (eq $i 1) $.System }}{{ $.System }}
+
+{{ end }}{{ .Content }}<end_of_turn>
+{{ else if eq .Role "assistant" }}<start_of_turn>model
+{{ .Content }}<end_of_turn>
+{{ end }}
+{{- if $last }}<start_of_turn>model
+{{ end }}
+{{- end }}"""
+PARAMETER stop <end_of_turn>

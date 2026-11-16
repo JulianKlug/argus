@@ -1,0 +1,25 @@
+# Derived from mistral-small3.2:24b (same weights). docs/backends/mistral24.md
+# Why: on Ollama 0.34.1 the stock template expects [TOOL_CALLS]name[CALL_ID]i[ARGS]{...},
+# but the model emits [TOOL_CALLS]name[ARGS]{...}; the generic parser drops those calls.
+# Fix: Ollama's built-in `ministral` parser for output; history rendered in the format the model emits;
+# tool definitions before the last user message (stock: only if it is among the last two messages,
+# so tools vanished during tool round trips).
+FROM mistral-small3.2:24b
+PARSER ministral
+TEMPLATE """{{- $lastUser := -1 }}
+{{- range $i, $m := .Messages }}{{ if eq $m.Role "user" }}{{ $lastUser = $i }}{{ end }}{{ end }}
+{{- range $index, $_ := .Messages }}
+{{- if eq .Role "system" }}[SYSTEM_PROMPT]{{ .Content }}[/SYSTEM_PROMPT]
+{{- else if eq .Role "user" }}
+{{- if and (eq $index $lastUser) $.Tools }}[AVAILABLE_TOOLS]{{ $.Tools }}[/AVAILABLE_TOOLS]
+{{- end }}[INST]{{ .Content }}[/INST]
+{{- else if eq .Role "assistant" }}
+{{- if .Content }}{{ .Content }}
+{{- end }}
+{{- range .ToolCalls }}[TOOL_CALLS]{{ .Function.Name }}[ARGS]{{ .Function.Arguments }}
+{{- end }}
+{{- if not (eq (len (slice $.Messages $index)) 1) }}</s>
+{{- end }}
+{{- else if eq .Role "tool" }}[TOOL_RESULTS]{{ .Content }}[/TOOL_RESULTS]
+{{- end }}
+{{- end }}"""

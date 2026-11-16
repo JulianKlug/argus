@@ -1,0 +1,40 @@
+{
+ "model": "qwen3.8:27b",
+ "created_at": "2026-11-16T15:04:13.4853903Z",
+ "message": {
+  "role": "assistant",
+  "content": "",
+  "thinking": "The user wants me to call get_lab twice in a single turn: once with name=lactate and once with name=creatinine. I should make both calls in the same block since they're independent.",
+  "tool_calls": [
+   {
+    "id": "call_l8rxmh8r",
+    "function": {
+     "index": 0,
+     "name": "get_lab",
+     "arguments": {
+      "name": "lactate"
+     }
+    }
+   },
+   {
+    "id": "call_oqc8peaa",
+    "function": {
+     "index": 1,
+     "name": "get_lab",
+     "arguments": {
+      "name": "creatinine"
+     }
+    }
+   }
+  ]
+ },
+ "done": true,
+ "done_reason": "stop",
+ "total_duration": 9598589372,
+ "load_duration": 8099062267,
+ "prompt_eval_count": 308,
+ "prompt_eval_cached_count": 0,
+ "prompt_eval_duration": 419581000,
+ "eval_count": 100,
+ "eval_duration": 1074945000
+}

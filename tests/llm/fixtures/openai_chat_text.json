@@ -1,0 +1,25 @@
+{
+ "id": "chatcmpl-695",
+ "object": "chat.completion",
+ "created": 1794841460,
+ "model": "mistral-small3.2:24b",
+ "system_fingerprint": "fp_ollama",
+ "choices": [
+  {
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": "Yes."
+   },
+   "finish_reason": "stop"
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 520,
+  "prompt_tokens_details": {
+   "cached_tokens": 3
+  },
+  "completion_tokens": 3,
+  "total_tokens": 523
+ }
+}
