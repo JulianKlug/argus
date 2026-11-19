@@ -102,7 +102,7 @@ def parse_config(raw: dict, backends: frozenset[str]) -> RenderingConfig:
         recent_lookback=timedelta(hours=_positive(selection.get("recent_lookback_hours"), "recent_lookback_hours")),
         trend_lookback=timedelta(hours=_positive(selection.get("trend_lookback_hours"), "trend_lookback_hours")),
         trend_min_points=_positive(selection.get("trend_min_points"), "trend_min_points"),
-        documented_delay=timedelta(minutes=_positive(selection.get("documented_delay_minutes"), "documented_delay_minutes")),
+        documented_delay=timedelta(minutes=_non_negative(selection.get("documented_delay_minutes"), "documented_delay_minutes")),
         past_dx_per_admission=_positive(selection.get("past_dx_per_admission"), "past_dx_per_admission"),
         recent_domain_priority=_domains(selection.get("recent_domain_priority")),
         note_section_priority=_sections(selection.get("note_section_priority")),
@@ -192,6 +192,12 @@ def _enum(kind: type[Enum], value, where: str):
         return kind(value)
     except ValueError:
         raise RenderingConfigError(f"{where}: unknown value {value!r}") from None
+
+
+def _non_negative(value, where: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise RenderingConfigError(f"{where} must be a non-negative integer")
+    return value
 
 
 def _positive(value, where: str) -> int:

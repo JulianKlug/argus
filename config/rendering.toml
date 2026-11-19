@@ -12,7 +12,7 @@ demographics = "minimal"
 [budget]                 # tokens, strictest configured tokenizer
 total = 16000
 current_state = 3000
-trends = 2750
+trends = 3600
 notes = 3000
 past_admissions = 1500   # recent evidence: remainder
 
@@ -50,10 +50,11 @@ note_section_priority = [
     "INDICATION",
 ]
 
-# Records, core values and trend points show 'documented T-..' when known at least this long after their event
-# time (e.g. lab result 3 h after draw), so a later result never reads as known at draw time. Measured on
-# MIMIC-IV: median charting delay 20 min, lab result 70 min.
-documented_delay_minutes = 30
+# Records, core values, trend points and notes show 'documented T-..' when known later than their event time
+# (e.g. lab result 3 h after draw), so a later result never reads as known at draw time. 0 = every delay visible
+# at minute resolution (default: a decision can fall inside any delay). A positive value hides shorter delays:
+# a token-compression arm for A7, not a default.
+documented_delay_minutes = 0
 
 # poe orders skipped from recent evidence when they have no poe_detail row: MIMIC-IV records no content for
 # them (no frequency, activity level or diet), e.g. 'General Care: Activity, New'. Key: "order_type|order_subtype".

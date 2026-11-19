@@ -215,15 +215,15 @@ def core_value(name: str, row: Mapping, ref: str, at: datetime, min_delay: timed
 
 
 def documented(event: datetime, known, at: datetime, min_delay: timedelta) -> str | None:
-    """'documented T-02:00' when the fact became known at least `min_delay` after its event time, else None.
+    """'documented T-02:00' when the fact became known later than its event time, else None.
 
     Within-window hindsight: a lab drawn T-05:00 and resulted T-02:00 was unknown to a T-04:00 decision.
-    Short charting lags stay silent to save tokens.
+    Same rendered minute stays silent; `min_delay` > 0 hides shorter delays (A7 compression arm).
     """
     if not present(known):
         return None
     event, known = pd.Timestamp(event), pd.Timestamp(known)
-    if known <= event or known - event < min_delay:
+    if known.floor("min") <= event.floor("min") or known - event < min_delay:
         return None
     return f"{DOCUMENTED} {timefmt.relative(known, at)}"
 
@@ -309,9 +309,12 @@ def shortened_sections(sections: list[NoteSection], priority: tuple[str, ...]) -
     return candidates
 
 
-def note(row: Mapping, ref: str, at: datetime, body: str, kept: list[str] | None) -> Lines:
-    """'[E..] T-1d 02:00 Radiology report[, SHORTENED (kept: IMPRESSION)]' + '| ' block."""
+def note(row: Mapping, ref: str, at: datetime, body: str, kept: list[str] | None, min_delay: timedelta) -> Lines:
+    """'[E..] T-1d 02:00 Radiology report; documented T-1d 00:30[, SHORTENED (kept: IMPRESSION)]' + '| ' block."""
     head = f"[{ref}] {timefmt.relative(row[EVENT_TIME], at)} {NOTE_TITLES.get(row['source_table'], label(row))}"
+    known = documented(row[EVENT_TIME], row.get(AVAILABLE_TIME), at, min_delay)
+    if known:
+        head += f"; {known}"
     if kept is not None:
         head += f", {SHORTENED} (kept: {FIELD_SEPARATOR.join(kept)})"
     return Lines(head, tuple(escape.block(body)) if body.strip() else ())

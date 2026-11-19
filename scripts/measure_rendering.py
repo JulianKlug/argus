@@ -180,7 +180,7 @@ def _domain_tokens(window) -> dict:
         for row in frame.to_dict("records"):
             ref = record_id(SourceRow(row[SOURCE_TABLE], int(row[SOURCE_ROW])))
             if domain is Domain.NOTES and fmt.present(row.get("text")):
-                lines += fmt.note(row, ref, at, str(row["text"]), None).all()
+                lines += fmt.note(row, ref, at, str(row["text"]), None, _config.documented_delay).all()
             else:
                 lines += fmt.record(row, ref, at, _config.documented_delay).all()
         text = "\n".join(lines)

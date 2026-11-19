@@ -230,7 +230,9 @@ Other sections may cite an owned record by its ref ID but never repeat its conte
 
 ### Availability time
 
-A record, core value or trend point whose `available_time` is at least `documented_delay_minutes` (default 30) after its `event_time` shows `documented <time>`, e.g. `T-05:00 Troponin T: 0.41 ng/mL; documented T-02:00`. A result drawn before a decision and resulted after it then never reads as known at the decision (within-window hindsight, D7). Shorter delays stay silent to save tokens: MIMIC-IV median delay is 20 min for charted observations, 70 min for lab results. Decision lines always show a differing documentation time (see Decisions).
+A record, core value, trend point or note whose `available_time` falls in a later clock minute than its `event_time` shows `documented <time>`, e.g. `T-05:00 Troponin T: 0.41 ng/mL; documented T-02:00`. A result drawn before a decision and resulted after it then never reads as known at the decision (within-window hindsight, D7): a decision can fall inside any delay, so none is hidden by default. Same-minute delays add nothing at minute resolution and stay silent.
+
+`documented_delay_minutes` (default 0) hides delays shorter than its value. A positive value is a token-compression arm for A7, not a default: MIMIC-IV median delay is 20 min for charted observations and 70 min for lab results, so most lines carry the time. Decision lines always show a differing documentation time (see Decisions).
 
 ### Core variables
 
@@ -264,8 +266,10 @@ Then, in fixed domain order (labs, microbiology):
 For each core variable with at least `trend_min_points` numeric observations sharing one unit within `trend_lookback` (default 24 h, ending at `at`):
 
 - Count.
-- First, minimum, maximum with times and ref IDs.
-- Absolute change, latest minus first. Latest is cited by its ref ID in current state.
+- First, minimum, maximum and latest with times, availability times and ref IDs.
+- Absolute change, latest minus first.
+
+Statistics describe the series as known at `at`; each point's `documented` time tells when it became known, so an agent can rebuild what was known at a decision inside the window.
 
 Observations with differing units form separate series; nothing is converted. Non-numeric, null or pending values are excluded from the statistics. No interpolation, no assumption of regular sampling.
 
@@ -384,7 +388,7 @@ The ref map is returned separately from the text. A1 persists it; D8 defines how
 |---|---:|---|
 | Total clinical text | 16,000 | Leaves room within the smallest configured context, 32,768 (mistral24) |
 | Current state | 3,000 | Quota |
-| Trends | 2,750 | Quota |
+| Trends | 3,600 | Quota |
 | Notes | 3,000 | Quota |
 | Past admissions | 1,500 | Quota |
 | Recent evidence | Remainder | Total minus mandatory minus used quotas |
@@ -421,7 +425,7 @@ The fixed tokenizer set means one canonical text per window. All backends in a m
 - Recent evidence domain priority.
 - Note section priority (`IMPRESSION`, `FINDINGS`, ...).
 - `contentless_orders`: `poe` `order_type|order_subtype` keys skipped without detail.
-- `documented_delay_minutes`: minimum delay from event to availability shown as `documented`.
+- `documented_delay_minutes`: delays shorter than this are not shown as `documented`; 0 (default) shows every delay at minute resolution; positive values are an A7 compression arm.
 - `demographics`: `minimal` (age, sex; default) or `full`.
 
 Strict validation: unknown keys, negative values, quotas summing above the total, unknown backend IDs or duplicate core variables raise `RenderingConfigError`.
@@ -479,7 +483,7 @@ Budgets are accepted when measurement shows the policy is feasible on the sample
 20. **Admission context.** Header shows admission location, services and care units in time order, cited once; absent lists render `NOT RECORDED`.
 21. **Orders with content.** No `poe` line without subtype, drug or detail; no configured contentless subtype without detail; medication stops name the drug; New/Change orders duplicating a prescription are skipped with their details.
 22. **Test results.** A lab or microbiology result whose row is a `TEST_ORDER` source is rendered in full (current state, trends or recent evidence) next to the decision.
-23. **Availability.** Records, core values and trend points known at least `documented_delay_minutes` after their event show `documented <time>`; shorter delays do not.
+23. **Availability.** By default every record, core value, trend point (first, min, max, latest) and note known in a later minute than its event shows `documented <time>`; same-minute delays do not; a positive `documented_delay_minutes` hides only shorter delays.
 24. **Domain omissions.** Coverage lists recent-evidence omissions per domain; they sum to the section's omissions.
 25. **Test privacy.** Real-data assertions compare booleans and counts; a failure never prints window text.
 

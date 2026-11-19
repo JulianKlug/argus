@@ -224,7 +224,7 @@ def test_trend_cites_points_and_contributors():
     result = render()
     line = _section(result.text, "TRENDS")
     assert line.startswith("[T1] Heart rate (bpm), last 24h: n 4; first 100 T-20:00")
-    assert "min 80 T-10:00" in line and "max 120 T-03:00" in line and "change +18 to latest" in line
+    assert "min 80 T-10:00" in line and "max 120 T-03:00" in line and re.search(r"latest 118 T-00:20 \[E\w+\]; change \+18$", line)
     assert result.refs["T1"].sources == tuple(SourceRow("chartevents", i) for i in range(1, 5))
     for ref_id in re.findall(r"\[(E\w+)\]", line):
         assert result.refs[ref_id].kind is RefKind.RECORD
@@ -465,20 +465,56 @@ def test_test_order_results_rendered():
 
 def test_availability_time_rendered():
     """protects=within-window hindsight: a result known later than its event time says when it became known
-    (core value, recent evidence, trend point); short charting delays stay silent;
-    fails_when=a lab drawn T-05:00 and resulted T-02:00 reads as known at T-05:00."""
+    (core value, recent evidence); fails_when=a lab drawn T-05:00 and resulted T-02:00 reads as known at T-05:00."""
     text = render(_test_order_window()).text
     assert re.search(r"Potassium: 6\.2 mEq/L.*T-05:00; documented T-02:00", _section(text, "CURRENT STATE"))
     assert "T-05:00 Troponin T: 0.41 ng/mL; documented T-02:00" in _section(text, "RECENT EVIDENCE")
 
-    quick = make_window({Domain.CHARTED_OBSERVATIONS: [
-        _hr(n, offset, 90.0 + n) | {"available_time": AT - offset + 10 * M}
-        for n, offset in ((1, 6 * H), (2, 4 * H), (3, 2 * H))
-    ] + [_hr(4, 3 * H, 140.0) | {"available_time": AT - 3 * H + 2 * H}]})
-    text = render(quick).text
+
+def _charting_delays():
+    """Heart rate series charted 10 min late, one point stored within the same minute, max stored 2 h late."""
+    return make_window({Domain.CHARTED_OBSERVATIONS: [
+        _hr(1, 6 * H, 91.0) | {"available_time": AT - 6 * H + 10 * M},
+        _hr(2, 4 * H, 92.0) | {"available_time": AT - 4 * H + timedelta(seconds=20)},
+        _hr(3, 3 * H, 140.0) | {"available_time": AT - H},
+        _hr(4, 2 * H, 93.0) | {"available_time": AT - 2 * H + 10 * M},
+    ]})
+
+
+def test_every_differing_availability_time_rendered():
+    """protects=default shows any availability time that differs at minute resolution, including short delays a
+    decision can fall into, and the latest trend point; fails_when=a 10-min delay is hidden, the latest point's
+    timing is missing, or a same-minute delay adds noise; no_claim=threshold arm (next test)."""
+    text = render(_charting_delays()).text
     trend = _section(text, "TRENDS")
+
+    assert "first 91 T-06:00 documented T-05:50" in trend
     assert "max 140 T-03:00 documented T-01:00" in trend
+    assert re.search(r"latest 93 T-02:00 documented T-01:50 \[E\w+\]", trend)
+    assert "Heart rate: 93.0 bpm, T-02:00; documented T-01:50" in _section(text, "CURRENT STATE")
+
+    same_minute = make_window({Domain.CHARTED_OBSERVATIONS: [
+        _hr(1, 2 * H, 92.0) | {"available_time": AT - 2 * H + timedelta(seconds=20)},
+    ]})
+    assert "documented" not in _section(render(same_minute).text, "CURRENT STATE")
+
+
+def test_documented_delay_threshold_arm():
+    """protects=A7 compression arm: a positive documented_delay_minutes hides shorter delays only;
+    fails_when=the threshold is ignored or hides longer delays."""
+    trend = _section(render(_charting_delays(), documented_delay_minutes=30).text, "TRENDS")
     assert "T-06:00 documented" not in trend
+    assert "max 140 T-03:00 documented T-01:00" in trend
+
+
+def test_radiology_note_availability_time():
+    """protects=current radiology reports show when they became available; fails_when=a report signed 2 h after
+    the study reads as known at study time."""
+    window = make_window({Domain.NOTES: [
+        row("radiology", 1, AT - 5 * H, None, text="IMPRESSION: effusion", available_time=AT - 3 * H),
+    ]})
+    notes = _section(render(window).text, "NOTES")
+    assert re.search(r"T-05:00 [^\n]*; documented T-03:00", notes)
 
 
 def test_quota_below_section_frame_raises():

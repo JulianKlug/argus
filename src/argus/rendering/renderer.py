@@ -416,7 +416,8 @@ class _Render:
         return items
 
     def _trend_line(self, variable: CoreVariable, trend: Trend) -> str:
-        """'[T1] Heart rate (bpm), last 24h: n 22; first 98 T-23:40 [E..]; min ..; max ..; change +20 to latest [E..]'."""
+        """'[T1] Heart rate (bpm), last 24h: n 22; first 98 T-23:40 [E..]; min ..; max ..; latest 118 T-00:20 [E..];
+        change +20'. Statistics as known at T; each point's documented time tells when it became known."""
         def point(name, p):
             time = timefmt.relative(p.time, self._at)
             note = format.documented(p.time, p.known, self._at, self._config.documented_delay)
@@ -432,7 +433,8 @@ class _Render:
             point("first", trend.first),
             point("min", trend.minimum),
             point("max", trend.maximum),
-            f"change {change} to latest [{self._refs.record(trend.latest.source)}]",
+            point("latest", trend.latest),
+            f"change {change}",
         ]
         ref = self._refs.trend(trend.sources)
         return f"[{ref}] {variable.label}{unit}, last {hours}h: " + "; ".join(parts)
@@ -554,12 +556,13 @@ class _Render:
                 ref = self._refs.record(source)
                 text = str(row["text"]) if format.present(row.get("text")) else ""
 
-                variants = ["\n".join(format.note(row, ref, self._at, text, None).all())]
+                delay = self._config.documented_delay
+                variants = ["\n".join(format.note(row, ref, self._at, text, None, delay).all())]
                 sections = format.note_sections(text, self._config.note_section_priority)
                 for kept in reversed(format.shortened_sections(sections, self._config.note_section_priority)):
                     body = "\n".join(s.text for s in kept)
                     names = [s.name for s in kept]
-                    variants.append("\n".join(format.note(row, ref, self._at, body, names).all()))
+                    variants.append("\n".join(format.note(row, ref, self._at, body, names, delay).all()))
                 items.append(Item(tuple(variants)))
         return items
 
