@@ -384,7 +384,7 @@ The ref map is returned separately from the text. A1 persists it; D8 defines how
 |---|---:|---|
 | Total clinical text | 16,000 | Leaves room within the smallest configured context, 32,768 (mistral24) |
 | Current state | 3,000 | Quota |
-| Trends | 2,500 | Quota |
+| Trends | 2,750 | Quota |
 | Notes | 3,000 | Quota |
 | Past admissions | 1,500 | Quota |
 | Recent evidence | Remainder | Total minus mandatory minus used quotas |

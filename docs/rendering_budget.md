@@ -8,7 +8,7 @@ Aggregates only: no patient text, no identifiers. Spec: `spec_rendering.md`.
 |---|---|
 | Command | `ARGUS_STORE_DIR=… uv run python scripts/measure_rendering.py --subjects-out <outside repo> --out <json> --workers 12` |
 | Seed | 20261116 (random: seed, heavy: seed + 1) |
-| Config digest | `a343c7173c2409ab2c82d6305d45b00a3571c0144de1838dd4edc45c5d46204f` |
+| Config digest | `8ba0b99c645db3ce549da14f4b34d3861c14eb191072a1017e4b540ae21c1717` |
 | Store manifest SHA256 | `bef00cf1f4256863abd8bb9a68c1a61ba49d3904edbbe6f5eb73719eca0593bb` (MIMIC-IV 3.1 + Note) |
 | qwen27 | `22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643` |
 | mistral24 | `810b24690f536970d4ad962dafda4db0a2d8b48b3a877639d537a3348b3558a3` |
@@ -43,10 +43,10 @@ Tokens median / p95 / p99 / max.
 | Past admissions | 1,500 | budgeted | 240 / 1,458 / 1,475 / 1,478 | 246 / 1,494 / 1,500 / 1,500 | 224 / 1,374 / 1,390 / 1,399 |
 | Recent evidence | remainder | unbudgeted | 25,295 / 47,986 / 56,879 / 81,910 | 26,132 / 49,782 / 58,993 / 84,805 | 24,880 / 47,601 / 56,128 / 80,425 |
 | Recent evidence | remainder | budgeted | 9,020 / 12,651 / 13,101 / 13,178 | 9,313 / 13,097 / 13,574 / 13,773 | 8,833 / 12,439 / 12,909 / 12,952 |
-| Trends | 2,500 | unbudgeted | 975 / 1,929 / 2,498 / 2,578 | 974 / 1,933 / 2,505 / 2,606 | 961 / 1,920 / 2,477 / 2,566 |
-| Trends | 2,500 | budgeted | 975 / 1,929 / 2,412 / 2,456 | 974 / 1,933 / 2,419 / 2,473 | 961 / 1,920 / 2,390 / 2,440 |
+| Trends | 2,750 | unbudgeted | 975 / 1,929 / 2,498 / 2,578 | 974 / 1,933 / 2,505 / 2,606 | 961 / 1,920 / 2,477 / 2,566 |
+| Trends | 2,750 | budgeted | 975 / 1,929 / 2,498 / 2,578 | 974 / 1,933 / 2,505 / 2,606 | 961 / 1,920 / 2,477 / 2,566 |
 | **Total** | 16,000 | unbudgeted | 36,708 / 91,252 / 181,036 / 333,905 | 37,740 / 94,161 / 176,132 / 327,366 | 36,048 / 89,542 / 172,414 / 319,264 |
-| **Total** | 16,000 | budgeted | 15,586 / 15,750 / 15,820 / 15,855 | 15,963 / 15,993 / 15,999 / 16,000 | 15,221 / 15,344 / 15,387 / 15,414 |
+| **Total** | 16,000 | budgeted | 15,586 / 15,750 / 15,820 / 15,855 | 15,963 / 15,995 / 15,999 / 16,000 | 15,221 / 15,345 / 15,387 / 15,414 |
 
 | Optional section | Windows hitting quota | Items available | Selected | Omitted |
 |---|---:|---|---|---|
@@ -54,7 +54,7 @@ Tokens median / p95 / p99 / max.
 | Notes | 97 | 7 / 72 / 138 / 185 | 3 / 9 / 12 / 14 | 0 / 70 / 135 / 182 |
 | Past admissions | 31 | 9 / 174 / 577 / 1,282 | 9 / 57 / 59 / 60 | 0 / 123 / 528 / 1,234 |
 | Recent evidence | 169 | 824 / 1,595 / 1,865 / 2,616 | 284 / 427 / 456 / 491 | 526 / 1,277 / 1,666 / 2,419 |
-| Trends | 3 | 9 / 18 / 24 / 25 | 9 / 18 / 23 / 23 | 0 / 0 / 1 / 2 |
+| Trends | 0 | 9 / 18 / 24 / 25 | 9 / 18 / 24 / 25 | 0 / 0 / 0 / 0 |
 
 ### Sections, heavy (n = 50)
 
@@ -73,8 +73,8 @@ Tokens median / p95 / p99 / max.
 | Past admissions | 1,500 | budgeted | 13 / 1,437 / 1,471 / 1,499 | 14 / 1,482 / 1,487 / 1,490 | 9 / 1,346 / 1,385 / 1,400 |
 | Recent evidence | remainder | unbudgeted | 39,552 / 66,243 / 77,076 / 79,829 | 41,004 / 68,750 / 79,423 / 82,251 | 38,848 / 65,563 / 75,790 / 78,578 |
 | Recent evidence | remainder | budgeted | 9,009 / 12,596 / 12,913 / 12,945 | 9,375 / 12,956 / 13,327 / 13,441 | 8,836 / 12,246 / 12,524 / 12,621 |
-| Trends | 2,500 | unbudgeted | 1,154 / 2,091 / 2,477 / 2,546 | 1,158 / 2,118 / 2,507 / 2,574 | 1,146 / 2,072 / 2,463 / 2,529 |
-| Trends | 2,500 | budgeted | 1,154 / 2,091 / 2,434 / 2,461 | 1,158 / 2,118 / 2,466 / 2,493 | 1,146 / 2,072 / 2,420 / 2,444 |
+| Trends | 2,750 | unbudgeted | 1,154 / 2,091 / 2,477 / 2,546 | 1,158 / 2,118 / 2,507 / 2,574 | 1,146 / 2,072 / 2,463 / 2,529 |
+| Trends | 2,750 | budgeted | 1,154 / 2,091 / 2,477 / 2,546 | 1,158 / 2,118 / 2,507 / 2,574 | 1,146 / 2,072 / 2,463 / 2,529 |
 | **Total** | 16,000 | unbudgeted | 57,541 / 94,605 / 186,973 / 266,020 | 58,621 / 95,734 / 186,116 / 263,698 | 56,290 / 91,988 / 180,103 / 255,531 |
 | **Total** | 16,000 | budgeted | 15,614 / 15,807 / 15,824 / 15,829 | 15,980 / 15,996 / 15,998 / 15,998 | 15,245 / 15,388 / 15,410 / 15,421 |
 
@@ -84,7 +84,7 @@ Tokens median / p95 / p99 / max.
 | Notes | 36 | 28 / 69 / 113 / 152 | 3 / 13 / 16 / 16 | 20 / 65 / 111 / 149 |
 | Past admissions | 5 | 0 / 174 / 456 / 700 | 0 / 49 / 56 / 62 | 0 / 125 / 408 / 653 |
 | Recent evidence | 50 | 1,302 / 2,166 / 2,364 / 2,433 | 272 / 385 / 391 / 391 | 980 / 1,960 / 2,221 / 2,306 |
-| Trends | 1 | 11 / 20 / 23 / 24 | 11 / 20 / 23 / 23 | 0 / 0 / 1 / 1 |
+| Trends | 0 | 11 / 20 / 23 / 24 | 11 / 20 / 23 / 24 | 0 / 0 / 0 / 0 |
 
 ### Unbudgeted tokens per domain (random, current + past)
 
@@ -146,18 +146,18 @@ Low rates follow case mix (ventilation, arterial line); `NOT RECORDED` is then i
 
 ### Other
 
-- Render time (random): p50 0.79 s, p95 1.24 s. `get_window()`: p50 1.26 s, p95 1.61 s.
+- Render time (random): p50 0.79 s, p95 1.27 s. `get_window()`: p50 1.25 s, p95 1.61 s.
 - `documented` availability times added ~10 % to current state and trends and ~0.4 k to median unbudgeted recent evidence; recent evidence omits a median 526 records (464 before).
 
 ## Decision
 
-Initial budgets **confirmed** and fixed in `config/rendering.toml`:
+Budgets fixed in `config/rendering.toml`; initial values confirmed except trends (2,500 → 2,750):
 
 | Component | Tokens | Rationale |
 |---|---:|---|
 | Total | 16,000 | Mandatory content max 4.4 k; leaves ≥ 11 k for evidence; fits mistral24's 32,768 context with prompt framing and 4,096 output tokens |
 | Current state | 3,000 | Max observed 2,761 (heavy): never truncated |
-| Trends | 2,500 | Binding in 3 / 200 random and 1 / 50 heavy windows, at most 2 trends dropped; latest values stay in current state. Raise to 2,750 if A7 shows trend loss matters |
+| Trends | 2,750 | `documented` times pushed max to 2,606 (random), cutting ≤ 2 trends (last in list: blood gases) in 4 / 250 windows at 2,500. At 2,750 never truncated; cap, so unused tokens go to recent evidence |
 | Notes | 3,000 | Binding in 49 % of random windows; long-tailed (p95 53 k); shortening keeps impressions; D9 summaries address the rest |
 | Past admissions | 1,500 | Binding in 16 %; breadth-first fill keeps every admission's leading codes |
 | Recent evidence | remainder | ~9.3 k median; omits a median 526 records, charted observations 478 of them (lowest priority but one) |

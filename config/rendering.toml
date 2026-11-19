@@ -12,7 +12,7 @@ demographics = "minimal"
 [budget]                 # tokens, strictest configured tokenizer
 total = 16000
 current_state = 3000
-trends = 2500
+trends = 2750
 notes = 3000
 past_admissions = 1500   # recent evidence: remainder
 
