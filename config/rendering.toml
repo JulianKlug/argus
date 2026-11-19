@@ -1,0 +1,201 @@
+# Window rendering to prompt text (docs/spec_rendering.md). No clinical data, credentials or prompts.
+# Budgets: docs/rendering_budget.md. Any change alters config_digest: a separate experimental condition.
+
+format_version = 1
+
+# Backend IDs from config/llm.toml whose tokenizers constrain rendering. Fixed set: one text per window.
+tokenizers = ["qwen27", "mistral24", "medgemma27"]
+
+# minimal: age, sex. full: adds race, language, insurance, marital status (separate condition).
+demographics = "minimal"
+
+[budget]                 # tokens, strictest configured tokenizer
+total = 16000
+current_state = 3000
+trends = 2500
+notes = 3000
+past_admissions = 1500   # recent evidence: remainder
+
+[selection]
+recent_lookback_hours = 24
+trend_lookback_hours = 24
+trend_min_points = 3
+past_dx_per_admission = 5
+
+# Recent evidence selection order after in-window records first.
+recent_domain_priority = [
+    "medication_administrations",
+    "inputs",
+    "labs",
+    "microbiology",
+    "outputs",
+    "procedures",
+    "medication_orders",
+    "orders",
+    "charted_observations",
+    "encounters",
+    "outpatient_measurements",
+]
+
+# Shortened note: first present section of this list, then the others present, in this order, while they fit.
+note_section_priority = [
+    "IMPRESSION",
+    "FINDINGS",
+    "CONCLUSION",
+    "DISCHARGE DIAGNOSIS",
+    "BRIEF HOSPITAL COURSE",
+    "DISCHARGE CONDITION",
+    "DISCHARGE MEDICATIONS",
+    "HISTORY OF PRESENT ILLNESS",
+    "INDICATION",
+]
+
+# poe orders skipped from recent evidence when they have no poe_detail row: MIMIC-IV records no content for
+# them (no frequency, activity level or diet), e.g. 'General Care: Activity, New'. Key: "order_type|order_subtype".
+contentless_orders = [
+    "General Care|Other",
+    "General Care|Vitals/Monitoring",
+    "General Care|Activity",
+    "Nutrition|Diet Order",
+]
+
+# Core variables, in rendering order: (source table, itemid) -> display label.
+[[core_variables]]
+table = "chartevents"
+itemid = 220045
+label = "Heart rate"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220052
+label = "Arterial BP mean"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220181
+label = "Non-invasive BP mean"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220050
+label = "Arterial BP systolic"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220179
+label = "Non-invasive BP systolic"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220210
+label = "Respiratory rate"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220277
+label = "SpO2"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 223761
+label = "Temperature"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220739
+label = "GCS eye"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 223900
+label = "GCS verbal"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 223901
+label = "GCS motor"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 223835
+label = "FiO2"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 220339
+label = "PEEP set"
+
+[[core_variables]]
+table = "chartevents"
+itemid = 223849
+label = "Ventilator mode"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50813
+label = "Lactate"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50912
+label = "Creatinine"
+
+[[core_variables]]
+table = "labevents"
+itemid = 51006
+label = "Urea nitrogen"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50971
+label = "Potassium"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50983
+label = "Sodium"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50931
+label = "Glucose"
+
+[[core_variables]]
+table = "labevents"
+itemid = 51222
+label = "Hemoglobin"
+
+[[core_variables]]
+table = "labevents"
+itemid = 51265
+label = "Platelets"
+
+[[core_variables]]
+table = "labevents"
+itemid = 51301
+label = "WBC"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50885
+label = "Bilirubin total"
+
+[[core_variables]]
+table = "labevents"
+itemid = 51237
+label = "INR"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50820
+label = "pH (blood gas)"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50821
+label = "pO2 (blood gas)"
+
+[[core_variables]]
+table = "labevents"
+itemid = 50818
+label = "pCO2 (blood gas)"

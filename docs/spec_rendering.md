@@ -99,6 +99,7 @@ class RenderedWindow:
     section_tokens: Mapping[Section, Mapping[str, int]] # section -> backend id -> tokens
     total_tokens: Mapping[str, int]                     # backend id -> tokens of `text`
     omissions: Mapping[Section, int]                    # records not rendered for budget
+    rendered_items: Mapping[Section, int]               # optional section -> items rendered (measurement)
     config_digest: str                                  # SHA256 of canonical config
     content_hash: str                                   # SHA256 of UTF-8 `text`
 
@@ -180,7 +181,12 @@ Section markers (`=== NAME ===`) are reserved; see Escaping.
 - Window bounds as relative times: start exclusive, end inclusive.
 - Age at `at` and sex.
 - `care_years`.
-- Admission type, hospital admission anchor, ICU care unit, ICU admission anchor.
+- Admission type, admission location, hospital admission anchor, ED arrival when recorded.
+- ICU care unit, ICU admission anchor.
+- Services: every visible `services` row (admitting service, then each change), time order.
+- Care units: every visible `transfers` row (ED, wards, ICUs), time order.
+
+The admission, ICU stay, service and transfer rows are cited by ref ID and owned by the header. Admission context is always present: MIMIC-IV has no admission note, chief complaint or admission diagnosis, so these rows are the only reason-for-admission data visible at `at`. The header is mandatory; service and care-unit lists are bounded per admission (MIMIC-IV max 34 transfers). Absent lists render `NOT RECORDED`.
 
 **Excluded demographics:** `race`, `language`, `insurance` and `marital_status` are not rendered. They are not needed to judge ICU decisions and may introduce demographic bias into flags. Including them is a separate experimental condition (see Configuration).
 
@@ -211,11 +217,12 @@ No decision is ever dropped for budget. If sections 1, 2 and 8 alone exceed the 
 A source record's full rendering appears **at most once** in the text. Ownership is assigned in this order; the first match wins:
 
 1. **Decisions:** rows that are a decision's source row.
-2. **Current state:** latest visible record of each core variable; records with `is_truncated` (ongoing intervals); records with `is_pending`.
-3. **Trends:** remaining observations of core variables in the trend lookback. They are summarised, never listed individually.
-4. **Recent evidence:** remaining current-admission records with `event_time` in the recent lookback.
-5. **Notes:** `NOTES` domain records.
-6. **Past admissions:** `past` record frames, except notes.
+2. **Header:** current admission, ICU stay, service and transfer rows (disjoint from decision tables).
+3. **Current state:** latest visible record of each core variable; records with `is_truncated` (ongoing intervals); records with `is_pending`.
+4. **Trends:** remaining observations of core variables in the trend lookback. They are summarised, never listed individually.
+5. **Recent evidence:** remaining current-admission records with `event_time` in the recent lookback.
+6. **Notes:** `NOTES` domain records.
+7. **Past admissions:** `past` record frames, except notes.
 
 Other sections may cite an owned record by its ref ID but never repeat its content. Trend statistics cite the records they highlight.
 
@@ -228,13 +235,15 @@ A fixed list in `config/rendering.toml`, keyed by `(source table, itemid)` with 
 | Vital signs | Heart rate, arterial and non-invasive mean BP, systolic BP, respiratory rate, SpO2, temperature |
 | Neurology | GCS eye, verbal, motor |
 | Respiratory support | FiO2, PEEP set, ventilator mode |
-| Labs | Lactate, creatinine, urea nitrogen, potassium, sodium, glucose, hemoglobin, platelets, WBC, bilirubin total, INR, arterial pH, pO2, pCO2 |
+| Labs | Lactate, creatinine, urea nitrogen, potassium, sodium, glucose, hemoglobin, platelets, WBC, bilirubin total, INR, blood gas pH, pO2, pCO2 |
+
+Blood gas items (50820, 50821, 50818) do not encode the specimen; they are labelled "blood gas", not "arterial". Temperature is the Fahrenheit item (223761).
 
 `scripts/measure_rendering.py` reports each core variable's presence rate. Changing the list changes `config_digest`.
 
 ### 3. Current state
 
-For each core variable, in list order: latest visible value, unit and time, or `NOT RECORDED` when no value exists in the current admission.
+For each core variable, in list order: latest visible value with the record's whitelisted fields (unit, flag, reference range, comments) and time, or `NOT RECORDED` when no value exists in the current admission. A latest value owned by Decisions is cited: `PEEP set: see [D..]`.
 
 Then, in fixed domain order (inputs, medication administrations, procedures):
 
@@ -278,9 +287,16 @@ Records not owned earlier, with `event_time` in `recent_lookback` (default 24 h,
 3. Newest `event_time` first.
 4. `source_table`, `source_row`.
 
-Records are rendered grouped by domain, chronologically within a domain. Selection order and display order are distinct: selection decides *what* fits, display decides *how* it reads.
+Records are rendered grouped by domain, chronologically within a domain. Detail rows (`emar_detail`, `poe_detail`) are indented under their parent record and selected with it; a detail row without label or whitelisted value is not shown. Selection order and display order are distinct: selection decides *what* fits, display decides *how* it reads.
 
 Each record shows label, value, unit, qualifiers (flag, comments) and time. Units are not converted. Item identifiers are never rendered.
+
+**`poe` orders.** MIMIC-IV `poe` names no drug (the linked `prescriptions` row does, by `poe_id`) and no lab test (no link to `labevents`). Before selection:
+
+- Medication, IV therapy and TPN orders with transaction New or Change and a visible linked prescription are skipped with their detail rows: the prescription carries the order.
+- Stops and holds of such orders are labelled with the stopped drug (`discontinue_of_poe_id`), e.g. `Medications: Furosemide, D/C`.
+- Any `poe` row left without subtype, drug or detail row is skipped: it carries no content (e.g. `Lab: New`). Ordered tests appear as pending lab rows.
+- Routine subtypes listed in `contentless_orders` (config) are skipped unless they have a detail row: MIMIC-IV records no frequency, activity level or diet for them (e.g. `General Care: Activity, New`). Other subtypes of the same order type stay (restraints, precautions, NPO, tube feeding).
 
 ### 6. Notes
 
@@ -288,13 +304,13 @@ D1 exposes current-admission radiology reports and past-admission discharge note
 
 Selection order:
 
-1. Current-admission radiology, newest first.
-2. Past discharge summaries, newest first.
+1. Past discharge summaries, newest first: the only clinician-written history visible at `at`.
+2. Current-admission radiology, newest first.
 3. Past radiology, newest first.
 
 A note that fits is rendered whole. A note that does not fit the remaining notes quota is shortened at explicit section boundaries: the `IMPRESSION` (or `FINDINGS` when absent) section first, then following sections whole while they fit. A note whose first kept section does not fit is omitted. Every shortened note is labelled `SHORTENED` with the kept section names.
 
-No LLM summarisation.
+No LLM summarisation in D5. Model summaries of past notes are a later milestone (roadmap D9).
 
 ### 7. Past admissions
 
@@ -305,7 +321,7 @@ Newest admission first. Per admission:
 - Diagnoses in coded sequence order.
 - ICD procedures in coded sequence order.
 
-Fill policy: first pass renders the first `past_dx_per_admission` diagnoses and procedures of every admission; second pass adds remaining codes, newest admission first. This favours breadth across admissions over depth in one.
+Fill policy: first pass renders the first `past_dx_per_admission` diagnoses and the first `past_dx_per_admission` procedures of every admission; second pass adds remaining codes, newest admission first. This favours breadth across admissions over depth in one.
 
 Past discharge summaries belong to Notes.
 
@@ -375,7 +391,7 @@ These are **starting values, not results**. Measurement (below) revises or confi
 2. For each quota section in order (3, 4, 6, 7): add records in selection order while the section's rendered text fits its quota under every counter. Stop at the first record that does not fit.
 3. Recent evidence fills the remaining total in the same way.
 4. Re-render Coverage with final counts. Count the complete text with every counter.
-5. If the complete text exceeds the total (section boundaries or the coverage update can add tokens), remove recent-evidence records from the end of the selection order, then re-count. Repeat until it fits.
+5. If the complete text exceeds the total (section boundaries or the coverage update can add tokens), remove recent-evidence records from the end of the selection order, then re-count. Repeat until it fits. If recent evidence is empty, the same applies to past admissions, notes, trends, then current state.
 
 Section fits are checked incrementally: each candidate record's line is counted once and running sums are used, with the exact section text re-counted only at the boundary. Step 5 runs only on overflow, so typical cost is one full-text count per counter.
 
@@ -398,6 +414,7 @@ The fixed tokenizer set means one canonical text per window. All backends in a m
 - Core variable list.
 - Recent evidence domain priority.
 - Note section priority (`IMPRESSION`, `FINDINGS`, ...).
+- `contentless_orders`: `poe` `order_type|order_subtype` keys skipped without detail.
 - `demographics`: `minimal` (age, sex; default) or `full`.
 
 Strict validation: unknown keys, negative values, quotas summing above the total, unknown backend IDs or duplicate core variables raise `RenderingConfigError`.
@@ -452,6 +469,8 @@ Budgets are accepted when measurement shows the policy is feasible on the sample
 17. **Measurement.** 250 seeded real windows measured as specified; aggregates documented per counter, section, domain and category.
 18. **Fixed budgets.** Final values in `config/rendering.toml`, justified in `docs/rendering_budget.md`, used by default.
 19. **No leakage into logs.** Prompt text, note content and ref maps never appear in logs, exception messages or committed outputs.
+20. **Admission context.** Header shows admission location, services and care units in time order, cited once; absent lists render `NOT RECORDED`.
+21. **Orders with content.** No `poe` line without subtype, drug or detail; no configured contentless subtype without detail; medication stops name the drug; New/Change orders duplicating a prescription are skipped with their details.
 
 ## Testing Plan
 
@@ -522,7 +541,7 @@ Additionally:
 - Agent prompt framing and instructions (A1).
 - Request-level preflight and output-token reserve (A1).
 - Diagnosis, guideline interpretation, error detection.
-- LLM summarisation or compression.
+- LLM summarisation or compression (D9: past-note summaries; D10: ED admission data).
 - Severity scores or derived risk scores.
 - Memory across windows (A2).
 - Collaboration messages and citation validation (D8).
@@ -537,7 +556,7 @@ Additionally:
 - **Budget information loss.** Omitted optional evidence may matter. Coverage reporting and A7 sensitivity arms address this.
 - **Core variable choice.** A fixed list may miss variables relevant to some decisions; they still appear in recent evidence when budget allows.
 - **Trend simplification.** First, last and extrema hide intermediate variation.
-- **Note coverage.** MIMIC-IV-Note lacks progress and nursing notes.
+- **Note coverage.** MIMIC-IV-Note lacks admission, progress and nursing notes; current-admission clinical text is limited to radiology. Admission reason is approximated by admission location, services and care units until MIMIC-IV-ED is integrated (roadmap D10).
 - **Prompt injection.** Escaping prevents structural injection, not model compliance with embedded text.
 - **Backend sensitivity.** Identical content does not guarantee identical interpretation.
 - **Oversized windows.** Windows whose decisions exceed the total fail explicitly.
