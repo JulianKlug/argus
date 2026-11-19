@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from argus.data.domains import EVENT_TIME, IS_PENDING, SOURCE_ROW, SOURCE_TABLE
+from argus.data.domains import AVAILABLE_TIME, EVENT_TIME, IS_PENDING, SOURCE_ROW, SOURCE_TABLE
 from argus.rendering.types import SourceRow
 
 VALUE_COLUMN = "valuenum"
@@ -24,6 +24,7 @@ class Point:
     time: pd.Timestamp
     value: float
     source: SourceRow
+    known: pd.Timestamp | None = None  # available_time: when the value became known
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,12 @@ def trends(observations: pd.DataFrame, at: datetime, lookback: timedelta, min_po
         series = rows[rows["_unit"] == unit]
         if len(series) < min_points:
             continue
+        known = series[AVAILABLE_TIME] if AVAILABLE_TIME in series else [None] * len(series)
         points = tuple(
-            Point(pd.Timestamp(t), float(v), SourceRow(table, int(row)))
-            for t, v, table, row in zip(series[EVENT_TIME], series["_value"], series[SOURCE_TABLE], series[SOURCE_ROW])
+            Point(pd.Timestamp(t), float(v), SourceRow(table, int(row)), None if pd.isna(k) else pd.Timestamp(k))
+            for t, v, table, row, k in zip(
+                series[EVENT_TIME], series["_value"], series[SOURCE_TABLE], series[SOURCE_ROW], known,
+            )
         )
         result.append(Trend(str(unit), points))
     return result

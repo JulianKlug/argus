@@ -23,7 +23,7 @@ _TOP_KEYS = {"format_version", "tokenizers", "demographics", "budget", "selectio
 _BUDGET_KEYS = {"total", "current_state", "trends", "notes", "past_admissions"}
 _SELECTION_KEYS = {
     "recent_lookback_hours", "trend_lookback_hours", "trend_min_points", "past_dx_per_admission",
-    "recent_domain_priority", "note_section_priority", "contentless_orders",
+    "recent_domain_priority", "note_section_priority", "contentless_orders", "documented_delay_minutes",
 }
 _CORE_KEYS = {"table", "itemid", "label"}
 
@@ -58,6 +58,7 @@ class RenderingConfig:
     recent_lookback: timedelta
     trend_lookback: timedelta
     trend_min_points: int
+    documented_delay: timedelta  # show availability time when known this much after event time
     past_dx_per_admission: int
     recent_domain_priority: tuple[Domain, ...]
     note_section_priority: tuple[str, ...]
@@ -101,6 +102,7 @@ def parse_config(raw: dict, backends: frozenset[str]) -> RenderingConfig:
         recent_lookback=timedelta(hours=_positive(selection.get("recent_lookback_hours"), "recent_lookback_hours")),
         trend_lookback=timedelta(hours=_positive(selection.get("trend_lookback_hours"), "trend_lookback_hours")),
         trend_min_points=_positive(selection.get("trend_min_points"), "trend_min_points"),
+        documented_delay=timedelta(minutes=_positive(selection.get("documented_delay_minutes"), "documented_delay_minutes")),
         past_dx_per_admission=_positive(selection.get("past_dx_per_admission"), "past_dx_per_admission"),
         recent_domain_priority=_domains(selection.get("recent_domain_priority")),
         note_section_priority=_sections(selection.get("note_section_priority")),

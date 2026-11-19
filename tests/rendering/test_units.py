@@ -94,6 +94,18 @@ def test_reference_collision_raises(monkeypatch):
         refs.record(SourceRow("labevents", 2))
 
 
+def test_decision_collision_detected_across_times(monkeypatch):
+    """protects=decision ref key includes event time; fails_when=two occurrences of one row, category and action
+    at different times share an ID without error."""
+    monkeypatch.setattr(references, "_digest", lambda key: "AAAAAAAA")
+    refs = references.References()
+    source = SourceRow("chartevents", 1)
+    refs.decision(source, DecisionCategory.DEVICE_SETTING, DecisionAction.CHANGE, AT - H)
+
+    with pytest.raises(RenderingError):
+        refs.decision(source, DecisionCategory.DEVICE_SETTING, DecisionAction.CHANGE, AT)
+
+
 def test_trend_refs_list_contributors_in_order():
     """protects=trend IDs window-local and sequential, contributors complete; fails_when=IDs skip or
     sources lost; no_claim=statistics."""
@@ -181,7 +193,7 @@ def test_record_line_renders_timestamps_relative():
     fails_when=a raw timestamp string reaches the line; no_claim=all free text is date-free."""
     charted = row("datetimeevents", 1, AT - H, "Last dose", value="2180-03-13 10:00:00")
     rx = row("prescriptions", 2, AT - H, "Heparin", dose_val_rx="5000", dose_unit_rx="UNIT", stoptime=AT - 10 * M)
-    text = format.record(charted, "E1", AT).head + format.record(rx, "E2", AT).head
+    text = format.record(charted, "E1", AT, H).head + format.record(rx, "E2", AT, H).head
     assert not re.search(r"\d{4}-\d{2}-\d{2}", text)
     assert "Last dose: T-1d 02:00" in text and "until T-00:10" in text
 

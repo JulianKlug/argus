@@ -424,3 +424,83 @@ def test_contentless_orders_config_validated():
     """protects=config keys are 'order_type|order_subtype'; fails_when=malformed key silently matches nothing."""
     with pytest.raises(RenderingConfigError):
         config(contentless_orders=["General Care"])
+
+
+POTASSIUM = 50971
+
+
+def _test_order_window():
+    """Specimens whose first row is a TEST_ORDER decision source and whose result is available in the window."""
+    k = row("labevents", 1, AT - 5 * H, "Potassium", itemid=POTASSIUM, value="6.2", valuenum=6.2,
+            valueuom="mEq/L", specimen_id=1, available_time=AT - 2 * H)
+    trop = row("labevents", 2, AT - 5 * H, "Troponin T", itemid=51003, value="0.41", valuenum=0.41,
+               valueuom="ng/mL", specimen_id=2, available_time=AT - 2 * H)
+    culture = row("microbiologyevents", 1, AT - 5 * H, "BLOOD CULTURE", micro_specimen_id=1,
+                  spec_type_desc="BLOOD CULTURE", org_name="STAPH AUREUS COAG +", available_time=AT - H)
+    orders = [
+        decision(table, 1 if table != "labevents" else n, AT - 5 * H, A.ORDER, name)
+        | {"available_time": AT - 5 * H}
+        for table, n, name in (("labevents", 1, "Potassium"), ("labevents", 2, "Troponin T"),
+                               ("microbiologyevents", 1, "BLOOD CULTURE"))
+    ]
+    return make_window(
+        {Domain.LABS: [k, trop], Domain.MICROBIOLOGY: [culture]},
+        decisions={DecisionCategory.TEST_ORDER: orders},
+    )
+
+
+def test_test_order_results_rendered():
+    """protects=a test order and its result are distinct facts: the TEST_ORDER decision stays, and the result row
+    of the same source (core lab, other lab, microbiology) is rendered in full; fails_when=decision ownership
+    leaves only 'see [D..]' and the value never reaches the text."""
+    text = render(_test_order_window()).text
+    decisions = _section(text, "DECISIONS")
+
+    assert decisions.count(" TEST_ORDER ORDER ") == 3
+    assert re.search(r"Potassium: 6\.2 mEq/L", _section(text, "CURRENT STATE"))
+    evidence = _section(text, "RECENT EVIDENCE")
+    assert "Troponin T: 0.41" in evidence
+    assert "STAPH AUREUS COAG +" in evidence
+
+
+def test_availability_time_rendered():
+    """protects=within-window hindsight: a result known later than its event time says when it became known
+    (core value, recent evidence, trend point); short charting delays stay silent;
+    fails_when=a lab drawn T-05:00 and resulted T-02:00 reads as known at T-05:00."""
+    text = render(_test_order_window()).text
+    assert re.search(r"Potassium: 6\.2 mEq/L.*T-05:00; documented T-02:00", _section(text, "CURRENT STATE"))
+    assert "T-05:00 Troponin T: 0.41 ng/mL; documented T-02:00" in _section(text, "RECENT EVIDENCE")
+
+    quick = make_window({Domain.CHARTED_OBSERVATIONS: [
+        _hr(n, offset, 90.0 + n) | {"available_time": AT - offset + 10 * M}
+        for n, offset in ((1, 6 * H), (2, 4 * H), (3, 2 * H))
+    ] + [_hr(4, 3 * H, 140.0) | {"available_time": AT - 3 * H + 2 * H}]})
+    text = render(quick).text
+    trend = _section(text, "TRENDS")
+    assert "max 140 T-03:00 documented T-01:00" in trend
+    assert "T-06:00 documented" not in trend
+
+
+def test_quota_below_section_frame_raises():
+    """protects=acceptance 15 for small A7 quotas: a quota section that cannot fit even its heading and omission
+    line fails closed instead of exceeding its quota; fails_when=an empty selection is returned over quota."""
+    with pytest.raises(RenderingBudgetError):
+        render(notes=5)
+
+
+def test_recent_evidence_omissions_per_domain():
+    """protects=coverage reports which domains lost evidence, in priority order; fails_when=omissions are counted
+    per section only or domain counts disagree with the section total."""
+    window = make_window({
+        Domain.CHARTED_OBSERVATIONS: [
+            row("chartevents", n, AT - n * 10 * M, "Pain level", itemid=1, value="3") for n in range(1, 60)
+        ],
+        Domain.OUTPUTS: [row("outputevents", n, AT - n * 10 * M, "Urine", value=50.0) for n in range(1, 30)],
+    })
+    result = render(window, total=2000, current_state=300, trends=60, notes=120, past_admissions=90)
+    coverage = _section(result.text, "COVERAGE")
+
+    omitted = result.omissions[Section.RECENT_EVIDENCE]
+    assert omitted > 0 and sum(result.domain_omissions.values()) == omitted
+    line = next(l for l in coverage.split("\n") if l.startswith("Recent evidence:"))
+    assert re.search(r"\((Outputs \d+, )?Charted observations \d+\)\.$", line)

@@ -49,7 +49,7 @@ class References:
         return self._register(record_id(source), EvidenceRef(RefKind.RECORD, (source,)))
 
     def decision(self, source: SourceRow, category: DecisionCategory, action: DecisionAction, event_time: datetime) -> str:
-        ref = EvidenceRef(RefKind.DECISION, (source,), category, action)
+        ref = EvidenceRef(RefKind.DECISION, (source,), category, action, pd.Timestamp(event_time).to_pydatetime())
         return self._register(decision_id(source, category, action, event_time), ref)
 
     def trend(self, sources: tuple[SourceRow, ...]) -> str:

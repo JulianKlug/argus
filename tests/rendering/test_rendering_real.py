@@ -1,7 +1,7 @@
 """Renderer on real MIMIC-IV windows with stand-in counters: structure, budget, determinism on real text.
 
 Run: ARGUS_STORE_DIR=/mnt/data1/klug/argus/mimiciv_3.1 uv run pytest -m real_data tests/rendering
-Assertion messages carry counts and headings only, never patient text.
+Assertions compare booleans and counts only: pytest introspection of a failed assert must never print text.
 """
 
 import os
@@ -62,11 +62,16 @@ def test_real_windows_structure_budget_determinism(windows):
         except RenderingBudgetError:
             continue  # reported by the measurement script; fail-closed is the expected behaviour
 
-        headings = [line for line in result.text.split("\n") if line.startswith("===")]
-        assert len(headings) == HEADINGS, f"window {index}: {len(headings)} headings"
-        assert not re.search(r"\b2\d{3}-\d{2}-\d{2}", result.text), f"window {index}: calendar date"
-        assert max(result.total_tokens.values()) <= cfg.budget.total, f"window {index}: over total"
-        for section in OPTIONAL_SECTIONS:
-            assert result.omissions[section] >= 0
-        assert renderer.render(window) == result, f"window {index}: not deterministic"
-        assert set(result.section_tokens) == set(Section)
+        headings = sum(line.startswith("===") for line in result.text.split("\n"))
+        has_date = re.search(r"\b2\d{3}-\d{2}-\d{2}", result.text) is not None
+        over_total = max(result.total_tokens.values()) > cfg.budget.total
+        negative = any(result.omissions[section] < 0 for section in OPTIONAL_SECTIONS)
+        deterministic = renderer.render(window) == result
+        all_sections = set(result.section_tokens) == set(Section)
+
+        assert headings == HEADINGS, f"window {index}: {headings} headings"
+        assert not has_date, f"window {index}: calendar date"
+        assert not over_total, f"window {index}: over total"
+        assert not negative, f"window {index}: negative omission count"
+        assert deterministic, f"window {index}: not deterministic"
+        assert all_sections, f"window {index}: section set"

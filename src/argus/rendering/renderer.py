@@ -65,6 +65,10 @@ _ONGOING_DOMAINS = (Domain.INPUTS, Domain.MEDICATION_ADMINISTRATIONS, Domain.PRO
 _PENDING_DOMAINS = (Domain.LABS, Domain.MICROBIOLOGY)
 _CORE_DOMAINS = {"chartevents": Domain.CHARTED_OBSERVATIONS, "labevents": Domain.LABS}
 
+# A TEST_ORDER from a result table renders the order (D2 drops result columns); its source row's result is a
+# distinct fact, so the row stays with current state, trends or recent evidence.
+_RESULT_TABLES = frozenset({"labevents", "microbiologyevents"})
+
 # Header: admission and ICU rows cited inline; services and care units listed in time order.
 _ICUSTAYS = "icustays"
 _HEADER_PATHS = (("services", "Services"), ("transfers", "Care units"))
@@ -170,6 +174,8 @@ class _Render:
         for section in _QUOTA_SECTIONS:
             quota = {name: quotas[section] for name in self._counters}
             filled[section] = fill(items[section], quota, self._counters, composers[section])
+            if not fits(filled[section].tokens, quota):
+                raise RenderingBudgetError(f"{section.value} quota below its heading and omission line")
 
         # 3. Recent evidence fills what the rest of the text leaves.
         filled[Section.RECENT_EVIDENCE].text = composers[Section.RECENT_EVIDENCE](filled[Section.RECENT_EVIDENCE])
@@ -204,6 +210,7 @@ class _Render:
             total_tokens=tokens,
             omissions={s: filled[s].omitted for s in OPTIONAL_SECTIONS},
             rendered_items={s: len(filled[s].chosen) for s in OPTIONAL_SECTIONS},
+            domain_omissions=filled[Section.RECENT_EVIDENCE].omitted_by_domain(),
             config_digest=digest,
             content_hash=hashlib.sha256(text.encode()).hexdigest(),
         )
@@ -256,8 +263,17 @@ class _Render:
             line = f"{name}: {len(state.chosen)} rendered, {state.omitted} omitted by rendering budget"
             if section is Section.NOTES:
                 line += f", {state.shortened} shortened"
+            if section is Section.RECENT_EVIDENCE and state.omitted:
+                line += f" ({self._domain_omissions(state)})"
             lines.append(line + ".")
         return self._section(Section.COVERAGE, lines)
+
+    def _domain_omissions(self, state: Filled) -> str:
+        """Omitted recent evidence per domain in priority order, e.g. 'Charted observations 400, Labs 12'."""
+        counts = state.omitted_by_domain()
+        return ", ".join(
+            f"{DOMAIN_NAMES[d]} {counts[d]}" for d in self._config.recent_domain_priority if counts.get(d)
+        )
 
     # ── 1. header ─────────────────────────────────────────────────────────
 
@@ -329,7 +345,8 @@ class _Render:
 
             for row in rows:
                 source = _source(row)
-                self._owners.claim(source, Section.DECISIONS)
+                if not (category is DecisionCategory.TEST_ORDER and source.table in _RESULT_TABLES):
+                    self._owners.claim(source, Section.DECISIONS)
                 ref = self._refs.decision(source, category, row[ACTION], row[EVENT_TIME])
                 self._decision_refs[source].append(ref)
 
@@ -366,7 +383,8 @@ class _Render:
         source = _source(row)
         if not self._owners.claim(source, Section.CURRENT_STATE):
             return Item((format.citation(variable.label, self._citations(source)).head,))
-        return Item(_joined(format.core_value(variable.label, row, self._refs.record(source), self._at)))
+        lines = format.core_value(variable.label, row, self._refs.record(source), self._at, self._config.documented_delay)
+        return Item(_joined(lines))
 
     def _owned_item(self, row: dict, section: Section, render, status: str) -> Item:
         """Full line if `section` owns the row, else a citation with its status."""
@@ -400,7 +418,10 @@ class _Render:
     def _trend_line(self, variable: CoreVariable, trend: Trend) -> str:
         """'[T1] Heart rate (bpm), last 24h: n 22; first 98 T-23:40 [E..]; min ..; max ..; change +20 to latest [E..]'."""
         def point(name, p):
-            return f"{name} {format.number(p.value)} {timefmt.relative(p.time, self._at)} [{self._refs.record(p.source)}]"
+            time = timefmt.relative(p.time, self._at)
+            note = format.documented(p.time, p.known, self._at, self._config.documented_delay)
+            time += f" {note}" if note else ""
+            return f"{name} {format.number(p.value)} {time} [{self._refs.record(p.source)}]"
 
         unit = f" ({_text(trend.unit)})" if trend.unit else ""
         hours = int(self._config.trend_lookback.total_seconds() // 3600)
@@ -488,10 +509,10 @@ class _Render:
 
         result = []
         for row in units:
-            lines = format.record(row, self._refs.record(_source(row)), self._at).all()
+            lines = format.record(row, self._refs.record(_source(row)), self._at, self._config.documented_delay).all()
             key_column = next((p[1] for p in _DETAIL_PARENTS.values() if p[0] == row[SOURCE_TABLE]), None)
             for child in children.get((row[SOURCE_TABLE], row.get(key_column)), []) if key_column else []:
-                child_lines = format.record(child, self._refs.record(_source(child)), self._at)
+                child_lines = format.record(child, self._refs.record(_source(child)), self._at, self._config.documented_delay)
                 if _informative(child):
                     lines += [INDENT + line for line in child_lines.all()]
 
@@ -499,7 +520,8 @@ class _Render:
             in_window = time > self._start
             selection = (not in_window, rank, -time.value, row[SOURCE_TABLE], row[SOURCE_ROW])
             display = (rank, time, row[SOURCE_TABLE], row[SOURCE_ROW])
-            result.append((selection, Item(("\n".join(lines),), display)))
+            domain = self._config.recent_domain_priority[rank]
+            result.append((selection, Item(("\n".join(lines),), display, domain)))
         return result
 
     # ── 6. notes ──────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ Quota filling (one section, every counter):
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from argus.data import Domain
 from argus.rendering.types import Section, SourceRow
 
 Counters = Mapping[str, Callable[[str], int]]
@@ -40,6 +41,7 @@ class Item:
 
     variants: tuple[str, ...]
     display: tuple = ()  # display sort key; selection order is the list order
+    domain: Domain | None = None  # recent evidence: source domain, for omission counts per domain
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,15 @@ class Filled:
     @property
     def shortened(self) -> int:
         return sum(c.shortened for c in self.chosen)
+
+    def omitted_by_domain(self) -> dict[Domain, int]:
+        """Items not rendered, per source domain (items without a domain are not counted)."""
+        chosen = {c.index for c in self.chosen}
+        counts: dict[Domain, int] = {}
+        for index, item in enumerate(self.items):
+            if index not in chosen and item.domain is not None:
+                counts[item.domain] = counts.get(item.domain, 0) + 1
+        return counts
 
     def selected(self) -> list[tuple[Item, str]]:
         """(item, chosen text) in display order."""

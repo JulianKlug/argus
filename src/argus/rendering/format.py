@@ -11,12 +11,12 @@ Every string goes through escape.py; every time through timefmt.py.
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
 
-from argus.data.domains import ACTION, EVENT_TIME, LABEL, SUBCATEGORY
+from argus.data.domains import ACTION, AVAILABLE_TIME, EVENT_TIME, LABEL, SUBCATEGORY
 from argus.rendering import escape, timefmt
 
 PENDING = "PENDING"
@@ -25,6 +25,7 @@ NOT_RECORDED = "NOT RECORDED"
 NO_RECORDS = "NO RECORDS AVAILABLE"
 SHORTENED = "SHORTENED"
 LATE = "(late)"
+DOCUMENTED = "documented"
 FIELD_SEPARATOR = ", "
 SIGNIFICANT_DIGITS = 6
 
@@ -189,10 +190,11 @@ def label(row: Mapping) -> str:
 # ── lines ─────────────────────────────────────────────────────────────────
 
 
-def record(row: Mapping, ref: str, at: datetime) -> Lines:
-    """'[E..] T-02:15 Label: fields'."""
+def record(row: Mapping, ref: str, at: datetime, min_delay: timedelta) -> Lines:
+    """'[E..] T-05:00 Label: fields; documented T-02:00' (documented only when known >= `min_delay` later)."""
     rendered, block = fields(row, RECORD_FIELDS.get(row["source_table"], ()), at)
-    return _line(f"[{ref}] {timefmt.relative(row[EVENT_TIME], at)} {label(row)}", rendered, block)
+    head = _line(f"[{ref}] {timefmt.relative(row[EVENT_TIME], at)} {label(row)}", rendered, block)
+    return _documented(head, row, at, min_delay)
 
 
 def pending(row: Mapping, ref: str, at: datetime) -> Lines:
@@ -205,10 +207,30 @@ def ongoing(row: Mapping, ref: str, at: datetime) -> Lines:
     return _line(f"[{ref}] since {timefmt.relative(row[EVENT_TIME], at)} {label(row)}", rendered + [ONGOING], block)
 
 
-def core_value(name: str, row: Mapping, ref: str, at: datetime) -> Lines:
-    """'[E..] Potassium: 5.9 mEq/L, abnormal, ref 3.3-5.1, T-00:20': the record's full fields, configured name."""
+def core_value(name: str, row: Mapping, ref: str, at: datetime, min_delay: timedelta) -> Lines:
+    """'[E..] Potassium: 5.9 mEq/L, abnormal, ref 3.3-5.1, T-05:00; documented T-02:00': full fields, configured name."""
     rendered, block = fields(row, RECORD_FIELDS[row["source_table"]], at)
-    return _line(f"[{ref}] {name}", rendered + [timefmt.relative(row[EVENT_TIME], at)], block)
+    head = _line(f"[{ref}] {name}", rendered + [timefmt.relative(row[EVENT_TIME], at)], block)
+    return _documented(head, row, at, min_delay)
+
+
+def documented(event: datetime, known, at: datetime, min_delay: timedelta) -> str | None:
+    """'documented T-02:00' when the fact became known at least `min_delay` after its event time, else None.
+
+    Within-window hindsight: a lab drawn T-05:00 and resulted T-02:00 was unknown to a T-04:00 decision.
+    Short charting lags stay silent to save tokens.
+    """
+    if not present(known):
+        return None
+    event, known = pd.Timestamp(event), pd.Timestamp(known)
+    if known <= event or known - event < min_delay:
+        return None
+    return f"{DOCUMENTED} {timefmt.relative(known, at)}"
+
+
+def _documented(lines: Lines, row: Mapping, at: datetime, min_delay: timedelta) -> Lines:
+    note = documented(row[EVENT_TIME], row.get(AVAILABLE_TIME), at, min_delay)
+    return Lines(f"{lines.head}; {note}", lines.block) if note else lines
 
 
 def citation(name: str, ref_ids: list[str], status: str | None = None) -> Lines:
@@ -233,7 +255,7 @@ def decision(row: Mapping, category_name: str, ref: str, order_ref: str | None, 
     if order_ref is not None:
         head += f"; order [{order_ref}]"
     if known != event:
-        head += f"; documented {timefmt.relative(known, at)}"
+        head += f"; {DOCUMENTED} {timefmt.relative(known, at)}"
         if event <= pd.Timestamp(start):
             head += f" {LATE}"
     return Lines(head, tuple(block))

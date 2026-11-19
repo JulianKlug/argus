@@ -158,13 +158,14 @@ def measure(candidate: tuple[int, str]) -> dict | None:
         "budgeted_total": rendered.total_tokens,
         "selected": {s.value: rendered.rendered_items[s] for s in OPTIONAL_SECTIONS},
         "omitted": {s.value: rendered.omissions[s] for s in OPTIONAL_SECTIONS},
+        "domain_omitted": {d.value: rendered.domain_omissions.get(d, 0) for d in Domain},
     }
     return result
 
 
 def _key(ref) -> str:
     """Opaque digest of the ref's key: collisions are counted without keeping row identifiers."""
-    raw = "|".join(f"{s.table}:{s.row}" for s in ref.sources) + f"|{ref.category}|{ref.action}"
+    raw = "|".join(f"{s.table}:{s.row}" for s in ref.sources) + f"|{ref.category}|{ref.action}|{ref.time}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -181,7 +182,7 @@ def _domain_tokens(window) -> dict:
             if domain is Domain.NOTES and fmt.present(row.get("text")):
                 lines += fmt.note(row, ref, at, str(row["text"]), None).all()
             else:
-                lines += fmt.record(row, ref, at).all()
+                lines += fmt.record(row, ref, at, _config.documented_delay).all()
         text = "\n".join(lines)
         result[domain.value] = {name: counter(text) for name, counter in _counters.items()}
     return result
@@ -247,6 +248,7 @@ def aggregate(results: list[dict], names: tuple[str, ...]) -> dict:
         "budgeted": {n: stats([r["budgeted_total"][n] for r in ok]) for n in names},
     }
     out["domains"] = {d.value: {n: stats([r["domains"][d.value][n] for r in results]) for n in names} for d in Domain}
+    out["recent_evidence_omitted_by_domain"] = {d.value: stats([r["domain_omitted"][d.value] for r in ok]) for d in Domain}
     out["categories"] = {
         c.value: {n: stats([r["categories"][c.value][n] for r in results]) for n in names} for c in DecisionCategory
     }

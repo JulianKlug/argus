@@ -91,6 +91,7 @@ class EvidenceRef:
     sources: tuple[SourceRow, ...]          # exactly 1 for RECORD and DECISION; >= 1 for TREND
     category: DecisionCategory | None       # DECISION only
     action: DecisionAction | None           # DECISION only
+    time: datetime | None                   # DECISION only: event time (occurrences of one row differ)
 
 @dataclass(frozen=True)
 class RenderedWindow:
@@ -100,6 +101,7 @@ class RenderedWindow:
     total_tokens: Mapping[str, int]                     # backend id -> tokens of `text`
     omissions: Mapping[Section, int]                    # records not rendered for budget
     rendered_items: Mapping[Section, int]               # optional section -> items rendered (measurement)
+    domain_omissions: Mapping[Domain, int]              # recent evidence: domain -> items not rendered for budget
     config_digest: str                                  # SHA256 of canonical config
     content_hash: str                                   # SHA256 of UTF-8 `text`
 
@@ -216,7 +218,7 @@ No decision is ever dropped for budget. If sections 1, 2 and 8 alone exceed the 
 
 A source record's full rendering appears **at most once** in the text. Ownership is assigned in this order; the first match wins:
 
-1. **Decisions:** rows that are a decision's source row.
+1. **Decisions:** rows that are a decision's source row, except `TEST_ORDER` decisions from result tables (`labevents`, `microbiologyevents`). D2 drops result columns from those decisions; the order and the result are distinct facts, so the source row stays available to the sections below and its result is rendered.
 2. **Header:** current admission, ICU stay, service and transfer rows (disjoint from decision tables).
 3. **Current state:** latest visible record of each core variable; records with `is_truncated` (ongoing intervals); records with `is_pending`.
 4. **Trends:** remaining observations of core variables in the trend lookback. They are summarised, never listed individually.
@@ -225,6 +227,10 @@ A source record's full rendering appears **at most once** in the text. Ownership
 7. **Past admissions:** `past` record frames, except notes.
 
 Other sections may cite an owned record by its ref ID but never repeat its content. Trend statistics cite the records they highlight.
+
+### Availability time
+
+A record, core value or trend point whose `available_time` is at least `documented_delay_minutes` (default 30) after its `event_time` shows `documented <time>`, e.g. `T-05:00 Troponin T: 0.41 ng/mL; documented T-02:00`. A result drawn before a decision and resulted after it then never reads as known at the decision (within-window hindsight, D7). Shorter delays stay silent to save tokens: MIMIC-IV median delay is 20 min for charted observations, 70 min for lab results. Decision lines always show a differing documentation time (see Decisions).
 
 ### Core variables
 
@@ -329,7 +335,7 @@ Current-admission diagnoses are not visible at `at`: D1 releases coded diagnoses
 
 ### 8. Coverage
 
-Per optional section: records rendered, records omitted by budget, notes shortened. Empty sections are listed. Counts only; no instruction text.
+Per optional section: records rendered, records omitted by budget, notes shortened. Recent evidence omissions are also given per domain in priority order, e.g. `(Labs 3, Charted observations 412)`. Empty sections are listed. Counts only; no instruction text.
 
 ### Missingness labels
 
@@ -388,7 +394,7 @@ These are **starting values, not results**. Measurement (below) revises or confi
 ### Enforcement
 
 1. Render mandatory sections (1, 2 and 8 with zero omissions). If over total with any counter, raise `RenderingBudgetError`.
-2. For each quota section in order (3, 4, 6, 7): add records in selection order while the section's rendered text fits its quota under every counter. Stop at the first record that does not fit.
+2. For each quota section in order (3, 4, 6, 7): add records in selection order while the section's rendered text fits its quota under every counter. Stop at the first record that does not fit. A quota that cannot hold the section heading and omission line raises `RenderingBudgetError` (small A7 quotas fail closed, never exceed).
 3. Recent evidence fills the remaining total in the same way.
 4. Re-render Coverage with final counts. Count the complete text with every counter.
 5. If the complete text exceeds the total (section boundaries or the coverage update can add tokens), remove recent-evidence records from the end of the selection order, then re-count. Repeat until it fits. If recent evidence is empty, the same applies to past admissions, notes, trends, then current state.
@@ -415,6 +421,7 @@ The fixed tokenizer set means one canonical text per window. All backends in a m
 - Recent evidence domain priority.
 - Note section priority (`IMPRESSION`, `FINDINGS`, ...).
 - `contentless_orders`: `poe` `order_type|order_subtype` keys skipped without detail.
+- `documented_delay_minutes`: minimum delay from event to availability shown as `documented`.
 - `demographics`: `minimal` (age, sex; default) or `full`.
 
 Strict validation: unknown keys, negative values, quotas summing above the total, unknown backend IDs or duplicate core variables raise `RenderingConfigError`.
@@ -464,13 +471,17 @@ Budgets are accepted when measurement shows the policy is feasible on the sample
 12. **Escaping.** Adversarial free text in notes, comments and order text cannot produce a `===` line or change section structure.
 13. **Notes.** A current-admission discharge note in the input raises. Shortened notes are labelled with kept sections.
 14. **Selection under pressure.** Repeated runs select and omit the same records; omissions are reported per section.
-15. **Budget.** The complete text fits the total under every counter; quota sections fit their quotas.
+15. **Budget.** The complete text fits the total under every counter; quota sections fit their quotas; a quota below its section frame raises.
 16. **Mandatory overflow.** Oversized mandatory content raises `RenderingBudgetError`; no partial output.
 17. **Measurement.** 250 seeded real windows measured as specified; aggregates documented per counter, section, domain and category.
 18. **Fixed budgets.** Final values in `config/rendering.toml`, justified in `docs/rendering_budget.md`, used by default.
 19. **No leakage into logs.** Prompt text, note content and ref maps never appear in logs, exception messages or committed outputs.
 20. **Admission context.** Header shows admission location, services and care units in time order, cited once; absent lists render `NOT RECORDED`.
 21. **Orders with content.** No `poe` line without subtype, drug or detail; no configured contentless subtype without detail; medication stops name the drug; New/Change orders duplicating a prescription are skipped with their details.
+22. **Test results.** A lab or microbiology result whose row is a `TEST_ORDER` source is rendered in full (current state, trends or recent evidence) next to the decision.
+23. **Availability.** Records, core values and trend points known at least `documented_delay_minutes` after their event show `documented <time>`; shorter delays do not.
+24. **Domain omissions.** Coverage lists recent-evidence omissions per domain; they sum to the section's omissions.
+25. **Test privacy.** Real-data assertions compare booleans and counts; a failure never prints window text.
 
 ## Testing Plan
 
@@ -560,6 +571,11 @@ Additionally:
 - **Prompt injection.** Escaping prevents structural injection, not model compliance with embedded text.
 - **Backend sensitivity.** Identical content does not guarantee identical interpretation.
 - **Oversized windows.** Windows whose decisions exceed the total fail explicitly.
+- **Note selection.** Notes fill greedily in priority order and stop at the first note whose shortest variant does not fit: a long past discharge summary can crowd out current radiology. Priority and summary fidelity are D9 and A7 questions.
+- **Ownership under budget.** A record omitted by its owning section is not offered to another section.
+- **Window-local trend IDs.** `T1`, `T2`, ... are unique within one window only; D8 messages must carry the window scope.
+- **Free-text dates.** Shifted dates inside note bodies are not rewritten; MIMIC-IV-Note masks most dates (`___`). Real-window tests check for calendar dates in the whole text.
+- **Sampling.** Measurement uses random instants; V2 runs sequential 6 h windows. Re-measure on the V2 schedule once D6 fixes it.
 
 ## Related
 
